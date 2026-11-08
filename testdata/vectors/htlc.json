@@ -1,0 +1,37 @@
+{
+  "description": "S de 32 bytes; H = SHA256(S) (Go crypto/sha256 == Solidity sha256(abi.encodePacked(bytes32)) == Panurus HTLC SHA256/None)",
+  "vectors": [
+    {
+      "preimage": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "hashlock": "0x66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+    },
+    {
+      "preimage": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "hashlock": "0xaf9613760f72635fbdb44a5a0a63c39f12af30f950a6ee5c971be188e89c4051"
+    },
+    {
+      "preimage": "0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "hashlock": "0x630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+    },
+    {
+      "preimage": "0x504524c853e5247f9383c24ed1231fdf4b2702bcc2814ea559ae85cd081716e7",
+      "hashlock": "0x10e1f6084b7af63decc1dd28fc921dc3da3c4814ad1cd592096d7c7d29c4ecef"
+    },
+    {
+      "preimage": "0x46b1e10048c1982489c919cafbe06af19b782abe281332b39e0084e91bff173f",
+      "hashlock": "0x817335e01a73f1e03bbc50455a300a433f27c5e324dd7926db187db2403c2924"
+    },
+    {
+      "preimage": "0x13bea3567e91cb5141a9f17e5ebeb9ac395c4fcf525f26841bbcfb5954811f0e",
+      "hashlock": "0x047bcf0d996eb827d46663a57552de35b270474bb489e6c9e315f245290d8870"
+    },
+    {
+      "preimage": "0x8550c0e58d2742c525de6f3acdb3db82707e6f3516efef9edfe7db815f5367d9",
+      "hashlock": "0xa74a6ab5b71bca0e789fa06d5b3f1cd65ead12383e3144c835c5a8cf3dc26ca8"
+    },
+    {
+      "preimage": "0x788d6f69f73f8c457659ee103a9f2d0610a24d277074da03a00bfbc872440dcc",
+      "hashlock": "0x837af0782ba397bbc887b8aa4e29f673b5d473d23f8462bd036eeab5f99f6e9d"
+    }
+  ]
+}

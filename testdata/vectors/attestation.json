@@ -1,0 +1,37 @@
+{
+  "chainId": 31337,
+  "verifier": "0x00000000000000000000000000000000000a77e5",
+  "domainTag": "0x338b3b490f7c0f1820c5605906b80fc5311108349666acf7f0a758be0c5dd9fd",
+  "swapId": "0xf56a8bf4e4dc13c153df0bf2936436f8451252fd0814c3e58e6f7e39d30b76fe",
+  "hashlock": "0x10e1f6084b7af63decc1dd28fc921dc3da3c4814ad1cd592096d7c7d29c4ecef",
+  "preimage": "0x504524c853e5247f9383c24ed1231fdf4b2702bcc2814ea559ae85cd081716e7",
+  "assetId": "recebivel-0001",
+  "assetIdHash": "0x5578aafad49ee2701f4691b6983ab95d4a8b5b72e5d0a7c08cefd0aa68b73987",
+  "recipientIdHash": "0xfffe8361b88e1d0a3c24dae8c82d2bf8b8ef991c851399c929ca8421b245283d",
+  "deadline": 1800000000,
+  "channel": "recebiveis",
+  "channelHash": "0xcd88b89a77c82ae3e09418efe9d4c862a1aa7fd51a1b1dcc9de8ed0e5cde5340",
+  "namespace": "tcc",
+  "namespaceHash": "0x87af7e6bcacb6bae57c9818402ee31439a082bcd74a8c73780b70350726e79b9",
+  "fabricTxId": "0xdfa198c35f89cc65100cc71d8549afbefe59cb86b4fa688bead01f42c5e7f74e",
+  "blockNumber": 42,
+  "digest": "0xc473562f07675173d6f044836dc83d606842fce22cb9a19f599a6f4f0b6816e0",
+  "orgs": [
+    {
+      "mspId": "RegistradoraMSP",
+      "mspIdHash": "0xc8858ac45c3dc1fe83b9418f10c5c8bad70a0f024c295db65225f8d324638ffb",
+      "qx": "0x34d81ea63574bcf76585d555dd517b9efaca35526c281bb506e8fc5293bd3fd3",
+      "qy": "0x93f2fddba233cba3e2b71ccc755b1e69d3e24b4267db22635cce9f70b214d722",
+      "r": "0x64dfd89f692d1d9d44eaec7a8159d3fa6005efeb5a7cccf9f4051826b8aaf193",
+      "s": "0x3df5d5960f218bd88c2bb8a525378d2aa7f47610ba43d9bae6810bdc9fdf449d"
+    },
+    {
+      "mspId": "BancoMSP",
+      "mspIdHash": "0xfe51169e67b29f85877912b4c85c708624ae006a5dc15702fe8fc7b5a7b67353",
+      "qx": "0x25e38d3da69ac37623451008144af701cba47ac6706f2a2d3f7629e8b2a21c34",
+      "qy": "0xacb61069e6d7eb8f64a66e7ac508dbf0f2878f7b335b8c6a0d0498329436a535",
+      "r": "0xa829c87472f3a93a2f6bbca46153dc7a580611693388aef48d7881938d90e057",
+      "s": "0x67a0e8be69f19c2572cdcd4969a9850802956da0468bf52b997faec5d929b521"
+    }
+  ]
+}
