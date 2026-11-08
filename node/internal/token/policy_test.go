@@ -3,12 +3,16 @@ package token
 import (
 	"crypto"
 	"crypto/sha256"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
@@ -148,5 +152,53 @@ func TestToFabricView(t *testing.T) {
 		if int(v.State) != want || v.Hashlock != h || v.AssetID != "x" {
 			t.Fatalf("%q -> %+v", in, v)
 		}
+	}
+}
+
+// Regressão (B2): nos outputs auditados, Owner = recipient dos metadados e Token.Owner = script.
+// A auditoria precisa enxergar o lock pelo dono no ledger.
+func TestAuditSeesHTLCLockByLedgerOwner(t *testing.T) {
+	now := time.Now()
+	sc := script(now.Add(5 * time.Minute))
+	raw, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptOwner, err := identity.WrapWithType(htlc.ScriptType, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &Recebivel{LinearID: "nft-1", Registro: "R", Cedente: "c", Sacado: "s", ValorFace: 1, Vencimento: "2027-01-01"}
+	typ, _ := TokenType(r)
+	out := &token.Output{
+		Token: token2.Token{Owner: scriptOwner, Type: typ, Quantity: "0x1"},
+		Owner: []byte("banco"), // recipient dos metadados, como no request.go do Panurus
+		Type:  typ,
+	}
+	outs := token.NewOutputStream([]*token.Output{out}, 64)
+	ins := token.NewInputStream(nil, nil, 64)
+
+	// a checagem de sanidade do lock é aplicada (deadline curto demais é recusado)
+	bad := script(now.Add(10 * time.Second))
+	braw, _ := json.Marshal(bad)
+	bOwner, _ := identity.WrapWithType(htlc.ScriptType, braw)
+	badOut := &token.Output{Token: token2.Token{Owner: bOwner, Type: typ}, Owner: []byte("banco"), Type: typ}
+	if err := CheckAudit(DefaultAuditPolicy(), NewGravames(), ins, token.NewOutputStream([]*token.Output{badOut}, 64), now); err == nil {
+		t.Fatal("a auditoria deveria aplicar CheckLockScript ao lock")
+	}
+	if err := CheckAudit(DefaultAuditPolicy(), NewGravames(), ins, outs, now); err != nil {
+		t.Fatal(err)
+	}
+	// gravame no ativo do output também é visto
+	g := NewGravames()
+	g.Set("nft-1", "penhor")
+	if CheckAudit(DefaultAuditPolicy(), g, ins, outs, now) == nil {
+		t.Fatal("gravame no output")
+	}
+	// e o lock é registrado como evidência para a atestação
+	recordLocks("tx-1", outs)
+	rec, ok := DefaultLocks.Get(sc.HashInfo.Hash)
+	if !ok || rec.LinearID != "nft-1" || rec.TxID != "tx-1" || string(rec.Recipient) != "banco" {
+		t.Fatalf("lock não registrado: %+v %v", rec, ok)
 	}
 }

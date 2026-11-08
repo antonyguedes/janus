@@ -26,3 +26,11 @@
 2. **T1 absoluto → deadline relativo:** o nó da Vendedora calcula `d = T1 − agora` no instante do lock. O Banco **não confia** nesse cálculo e confere no vault que `|script.Deadline − T1| ≤ tolerância de skew`, e que `script.HashInfo` tem exatamente (SHA256, None, H). Ver o ADR-0004.
 3. **Claim no Fabric é do Banco:** como a assinatura do recipient é exigida, nas duas abordagens quem faz o `htlc.Claim` no Fabric é o nó do Banco (watchtower). Um "claim permissionless" no Fabric não é possível sem mudar o Panurus, e isso entra no modelo de ameaças como requisito de disponibilidade do Banco.
 4. **O modelo de ameaça de tempo muda** em relação à seção 6 do plano. O risco não é o timestamp do cliente, e sim um **endossante com relógio manipulado**. Detalhes e mitigação no ADR-0004.
+
+## Adendo (Fase 4): dono dos outputs na auditoria
+
+Nos outputs de **transferência** devolvidos por `ttx.Auditor.Audit` (Panurus v0.27.0, `token/request.go`), o campo `token.Output.Owner` é o **recipient dos metadados** (no HTLC, o Banco), e o dono real no ledger (a identidade tipada do script HTLC) fica em `token.Output.Token.Owner`, embutido. O `htlc.ToOutput` lê o campo externo. Por isso, uma auditoria que o usa para detectar locks **nunca enxerga o script**. A view de auditoria de exemplo do upstream (`integration/token/interop/views/auditor.go`) tem essa lacuna latente: a validação do script dos novos locks fica sem efeito.
+
+**Decisão:** a auditoria do Janus usa o dono no ledger (`ledgerOwner`) para detectar scripts HTLC, validar novos locks (`CheckLockScript`), classificar claim/reclaim e registrar a evidência de atestação (B2). Há teste de regressão em `TestAuditSeesHTLCLockByLedgerOwner`. Candidato a reporte upstream.
+
+O mesmo vale para `Type`: `token.Output` embute `token.Token` e declara um `Type` próprio. A auditoria lê o primeiro não vazio.

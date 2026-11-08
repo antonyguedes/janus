@@ -53,6 +53,7 @@ func Topology(o Options) []api.Topology {
 		RegisterViewFactory("registerAuditor", &jt.RegisterAuditorViewFactory{}).
 		RegisterViewFactory("issue", &jt.IssueViewFactory{}).
 		RegisterViewFactory("gravame", &jt.GravameViewFactory{}).
+		RegisterResponder(&jt.AttestResponderView{}, &jt.CollectView{}).
 		RegisterViewFactory("TxFinality", &views2.TxFinalityViewFactory{})
 
 	ft2.AddNodeByName("vendedora").
@@ -64,6 +65,7 @@ func Topology(o Options) []api.Topology {
 		).
 		RegisterResponder(&jt.AcceptIssuedView{}, &jt.IssueView{}).
 		RegisterViewFactory("propose", &jt.ProposeViewFactory{}).
+		RegisterViewFactory("collect", &jt.CollectViewFactory{}).
 		RegisterViewFactory("get", &jt.GetViewFactory{}).
 		RegisterViewFactory("lock", &jt.LockViewFactory{}).
 		RegisterViewFactory("reclaim", &jt.ReclaimViewFactory{}).
@@ -80,6 +82,7 @@ func Topology(o Options) []api.Topology {
 		RegisterResponder(&jt.AcceptIssuedView{}, &jt.IssueView{}).
 		RegisterResponder(&jt.LockAcceptView{}, &jt.LockView{}).
 		RegisterResponder(&jt.AcceptProposalView{}, &jt.ProposeView{}).
+		RegisterResponder(&jt.AttestResponderView{}, &jt.CollectView{}).
 		RegisterViewFactory("get", &jt.GetViewFactory{}).
 		RegisterViewFactory("expect", &jt.ExpectLockViewFactory{}).
 		RegisterViewFactory("claim", &jt.ClaimViewFactory{}).

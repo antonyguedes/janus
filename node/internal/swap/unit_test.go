@@ -11,7 +11,7 @@ import (
 )
 
 func TestPoliciesValid(t *testing.T) {
-	for name, p := range map[string]TimePolicy{"prod": ProductionPolicy(), "dev": DevPolicy()} {
+	for name, p := range map[string]TimePolicy{"prod": ProductionPolicy(), "dev": DevPolicy(), "e2e": E2EPolicy()} {
 		if err := p.Validate(); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}

@@ -1,7 +1,9 @@
 package token
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -46,6 +48,8 @@ func (a *AuditView) Call(ctx view.Context) (any, error) {
 	if err := CheckAudit(DefaultAudit, DefaultGravames, inputs, outputs, time.Now()); err != nil {
 		return nil, err
 	}
+	slog.Info("audit: transação auditada", "tx", tx.ID(), "inputs", inputs.Count(), "outputs", outputs.Count())
+	recordLocks(tx.ID(), outputs)
 	return ctx.RunView(ttx.NewAuditApproveView(w, tx))
 }
 
@@ -59,7 +63,7 @@ func CheckAudit(p AuditPolicy, g *Gravames, inputs *token.InputStream, outputs *
 	}
 	for i := range inputs.Count() {
 		in := inputs.At(i)
-		if err := checkType(in.Type); err != nil {
+		if err := checkType(inputType(in)); err != nil {
 			return err
 		}
 		hin, err := htlc.ToInput(in)
@@ -77,7 +81,7 @@ func CheckAudit(p AuditPolicy, g *Gravames, inputs *token.InputStream, outputs *
 		if err != nil {
 			return err
 		}
-		op, err := ClassifySpend(s, out.Owner)
+		op, err := ClassifySpend(s, ledgerOwner(out))
 		if err != nil {
 			return err
 		}
@@ -87,25 +91,81 @@ func CheckAudit(p AuditPolicy, g *Gravames, inputs *token.InputStream, outputs *
 	}
 	for i := range outputs.Count() {
 		out := outputs.At(i)
-		if err := checkType(out.Type); err != nil {
+		if err := checkType(outputType(out)); err != nil {
 			return err
 		}
-		ho, err := htlc.ToOutput(out)
-		if err != nil {
-			return fmt.Errorf("audit: output %d: %w", i, err)
-		}
-		if !ho.IsHTLC() {
-			continue
-		}
-		s, err := ho.Script()
+		s, isHTLC, err := scriptOfOutput(out)
 		if err != nil {
 			return fmt.Errorf("audit: output %d script: %w", i, err)
+		}
+		if !isHTLC {
+			continue
 		}
 		if err := p.CheckLockScript(s, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// recordLocks guarda os locks HTLC aprovados pela auditoria (evidência do atestador, B2).
+// O atestador só assina depois de conferir no ledger que a transação foi comitada como válida.
+func recordLocks(txID string, outputs *token.OutputStream) {
+	for i := range outputs.Count() {
+		out := outputs.At(i)
+		s, isHTLC, err := scriptOfOutput(out)
+		if err != nil {
+			slog.Warn("audit: htlc output sem script legível", "tx", txID, "err", err)
+			continue
+		}
+		if !isHTLC {
+			continue
+		}
+		r, err := FromTokenType(outputType(out))
+		if err != nil {
+			slog.Warn("audit: htlc output sem recebível", "tx", txID, "type", string(outputType(out)), "err", err)
+			continue
+		}
+		DefaultLocks.Put(LockRecord{Hash: s.HashInfo.Hash, LinearID: r.LinearID, Sender: s.Sender,
+			Recipient: s.Recipient, Deadline: s.Deadline, TxID: txID})
+		slog.Info("audit: lock registrado para atestação", "tx", txID, "asset", r.LinearID)
+	}
+}
+
+// ledgerOwner devolve o dono do output NO LEDGER. Nos outputs de transferência auditados, o campo
+// externo Owner é o recipient dos metadados (no HTLC, o Banco), e o dono real (a identidade
+// tipada do script HTLC) fica no token.Token embutido. Ler o campo errado faz a auditoria não
+// enxergar o lock.
+func ledgerOwner(o *token.Output) []byte {
+	if len(o.Token.Owner) != 0 {
+		return o.Token.Owner
+	}
+	return o.Owner
+}
+
+// scriptOfOutput devolve o script HTLC se o output for de propriedade de um script.
+func scriptOfOutput(o *token.Output) (*htlc.Script, bool, error) {
+	s, err := scriptOf(ledgerOwner(o))
+	if err != nil {
+		if errors.Is(err, errNotHTLC) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return s, true, nil
+}
+
+// tokenTypeOf: token.Output/token.Input embutem token.Token e também declaram um campo Type
+// próprio. Dependendo do caminho (auditoria, vault), só um deles vem preenchido.
+func outputType(o *token.Output) token2.Type {
+	if o.Type != "" {
+		return o.Type
+	}
+	return o.Token.Type
+}
+
+func inputType(i *token.Input) token2.Type {
+	return i.Type
 }
 
 func outputForAction(outputs *token.OutputStream, action int) (*token.Output, error) {

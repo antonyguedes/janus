@@ -65,6 +65,12 @@ test-contracts: ## forge test (unit + fuzz + invariantes)
 test-node: ## go test do nó Janus
 	cd node && go test ./... -cover
 
-.PHONY: it
-it: ## integração Fabric/Panurus (rede NWO real; requer make fabric-bins e Docker)
-	cd node/topology && FAB_BINS=$(FAB_BINS) go test ./it -count=1 -timeout 40m -v
+.PHONY: it e2e web
+it: ## integração + E2E em rede real (NWO Fabric 3.1.5 + anvil; requer make fabric-bins e Docker)
+	cd node/topology && FAB_BINS=$(FAB_BINS) go test ./it -count=1 -timeout 90m -v
+
+e2e: ## só os E2E (A, B2, cenário 3 e cenário 5) com os nós Janus reais
+	cd node/topology && FAB_BINS=$(FAB_BINS) go test ./it -run TestE2E -count=1 -timeout 90m -v
+
+web: ## simulador web (compila o núcleo para WASM e sobe o Vite)
+	npm run web

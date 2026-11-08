@@ -22,8 +22,10 @@ func RegisterViews(r *fscview.Registry) error {
 		r.RegisterFactory("expect", &token.ExpectLockViewFactory{}),
 		r.RegisterFactory("status", &token.StatusViewFactory{}),
 		r.RegisterFactory("propose", &token.ProposeViewFactory{}),
+		r.RegisterFactory("collect", &token.CollectViewFactory{}),
 		r.RegisterResponder(&token.AcceptIssuedView{}, &token.IssueView{}),
 		r.RegisterResponder(&token.LockAcceptView{}, &token.LockView{}),
 		r.RegisterResponder(&token.AcceptProposalView{}, &token.ProposeView{}),
+		r.RegisterResponder(&token.AttestResponderView{}, &token.CollectView{}),
 	)
 }

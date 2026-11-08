@@ -25,6 +25,15 @@ type Info struct {
 	EVM       string          `json:"evm"`
 	Protocols []swap.Protocol `json:"protocols"`
 	Faults    engine.Faults   `json:"faults"`
+	// Attestor (Registradora/Banco): chave P-256 de atestador para o cadastro no FabricProofVerifier.
+	Attestor *AttestorInfo `json:"attestor,omitempty"`
+}
+
+// AttestorInfo é a chave pública de atestador da org (B2).
+type AttestorInfo struct {
+	MSPID string `json:"mspId"`
+	Qx    string `json:"qx"`
+	Qy    string `json:"qy"`
 }
 
 // Server é o handler HTTP.

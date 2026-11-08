@@ -72,3 +72,11 @@ func DevPolicy() TimePolicy {
 		DeadlineTolerance: 30 * time.Second,
 	}
 }
+
+// E2EPolicy: prazos curtos para os testes ponta a ponta em rede real (T2 = 75 s, T1 = 170 s, Δ = 90 s).
+func E2EPolicy() TimePolicy {
+	p := DevPolicy()
+	p.T1Offset, p.T2Offset = 170*time.Second, 75*time.Second
+	p.RevealMargin, p.BuyerLockMargin = 20*time.Second, 25*time.Second
+	return p
+}

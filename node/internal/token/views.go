@@ -3,6 +3,7 @@ package token
 import (
 	"crypto"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -478,6 +479,12 @@ type LockStatus struct {
 	Deadline  time.Time `json:"deadline,omitzero"`
 	HashOK    bool      `json:"hashOk"`
 	Preimage  []byte    `json:"preimage,omitempty"` // publicado no ledger pelo claim
+	TxID      string    `json:"txId,omitempty"`     // transação que criou o output HTLC
+}
+
+func decodeStatus(raw []byte) (LockStatus, error) {
+	var st LockStatus
+	return st, json.Unmarshal(raw, &st)
 }
 
 type StatusView struct{ *Status }
@@ -534,7 +541,7 @@ func (v *StatusView) Call(ctx view.Context) (any, error) {
 			if err != nil || string(s.HashInfo.Hash) != string(v.Hash) {
 				continue
 			}
-			st.State, st.Sender, st.Recipient, st.Deadline = "locked", s.Sender, s.Recipient, s.Deadline
+			st.State, st.Sender, st.Recipient, st.Deadline, st.TxID = "locked", s.Sender, s.Recipient, s.Deadline, t.Id.TxId
 			st.HashOK = s.HashInfo.HashFunc == crypto.SHA256 && s.HashInfo.HashEncoding == encoding.None
 			if r, err := FromTokenType(t.Type); err == nil {
 				st.LinearID = r.LinearID
@@ -564,13 +571,15 @@ func collect(it iterators.Iterator[*token2.UnspentToken], err error) ([]*token2.
 	return iterators.ReadAllPointers(it)
 }
 
+var errNotHTLC = errors.New("not an htlc owner")
+
 func scriptOf(owner []byte) (*htlc.Script, error) {
 	ti, err := identity.UnmarshalTypedIdentity(owner)
 	if err != nil {
-		return nil, err
+		return nil, errNotHTLC // identidade sem tipo: não é script
 	}
 	if ti.Type != htlc.ScriptType {
-		return nil, fmt.Errorf("not an htlc owner")
+		return nil, errNotHTLC
 	}
 	s := &htlc.Script{}
 	return s, s.FromBytes(ti.Identity)

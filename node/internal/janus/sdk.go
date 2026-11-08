@@ -27,9 +27,11 @@ import (
 	fscview "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 
 	"janus/node/internal/api"
+	"janus/node/internal/attest"
 	"janus/node/internal/besu"
 	"janus/node/internal/engine"
 	"janus/node/internal/hashlock"
+	"janus/node/internal/protocol/cacti"
 	"janus/node/internal/protocol/htlc"
 	"janus/node/internal/secrets"
 	"janus/node/internal/store"
@@ -43,10 +45,15 @@ type Config struct {
 	MSPID        string        `json:"mspId"`
 	Counterparty string        `json:"counterparty,omitempty"` // nó FSC do Banco (só a Vendedora)
 	DataDir      string        `json:"dataDir"`
-	Policy       string        `json:"policy"` // dev | prod
+	Policy       string        `json:"policy"` // dev | prod | e2e
 	API          APIConfig     `json:"api"`
 	Besu         *BesuConfig   `json:"besu,omitempty"`
 	Faults       engine.Faults `json:"faults"`
+	// Attestors: nós FSC atestadores consultados pelo relay (Vendedora, abordagem B2).
+	Attestors []string `json:"attestors,omitempty"`
+	// Channel/Namespace do Token Chaincode (atestação). Padrão: os do deployment.
+	Channel   string `json:"channel,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 type APIConfig struct {
@@ -126,8 +133,11 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func (c *Config) policy() swap.TimePolicy {
-	if c.Policy == "prod" {
+	switch c.Policy {
+	case "prod":
 		return swap.ProductionPolicy()
+	case "e2e":
+		return swap.E2EPolicy()
 	}
 	return swap.DevPolicy()
 }
@@ -209,8 +219,12 @@ func (s *SDK) startRegistradora(ctx context.Context, cfg *Config, views *fscview
 	if err != nil {
 		return err
 	}
+	ai, err := s.enableAttestor(cfg, cfg.Channel, cfg.Namespace)
+	if err != nil {
+		return err
+	}
 	eng := engine.New(engine.Config{Role: "registradora", Policy: cfg.policy()})
-	srv := &api.Server{Info: api.Info{Node: cfg.Role, Role: "registradora", MSPID: cfg.MSPID},
+	srv := &api.Server{Info: api.Info{Node: cfg.Role, Role: "registradora", MSPID: cfg.MSPID, Attestor: ai},
 		Store: st, Engine: eng, AllowOrigin: cfg.API.AllowOrigin,
 		Issue: func(r *http.Request, req api.IssueRequest) (string, error) {
 			res, err := views.InitiateView(r.Context(), &token.IssueView{Issue: &token.Issue{
@@ -282,14 +296,24 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 		return err
 	}
 
-	proto := &htlc.Protocol{
-		Fabric:  &token.FSCPort{Views: views, Counterparty: cfg.Counterparty},
-		Besu:    besuAdapter{bc},
-		Secrets: sec,
-		Policy:  policy,
+	fab := &token.FSCPort{Views: views, Counterparty: cfg.Counterparty}
+	proto := &htlc.Protocol{Fabric: fab, Besu: besuAdapter{bc}, Secrets: sec, Policy: policy}
+	protoB := &cacti.Protocol{Fabric: fab, Payment: settlementAdapter{bc}, Secrets: sec, Policy: policy,
+		Collector: &fscCollector{views: views, attestors: cfg.Attestors}}
+	protocols := map[swap.Protocol]swap.SettlementProtocol{swap.ProtocolHTLC: proto, swap.ProtocolCacti: protoB}
+	enabled := []swap.Protocol{swap.ProtocolHTLC, swap.ProtocolCacti}
+	eng := engine.New(engine.Config{Role: role, Policy: policy, Faults: cfg.Faults, Log: s.log, Protocol: protocols})
+
+	var ai *api.AttestorInfo
+	if role == swap.RoleBuyer { // o Banco também é atestador (política 2-de-2 com a Registradora)
+		ch, ns := cfg.Channel, cfg.Namespace
+		if ch == "" {
+			ch, ns = dep.FabricChannel, dep.FabricNamespace
+		}
+		if ai, err = s.enableAttestor(cfg, ch, ns); err != nil {
+			return err
+		}
 	}
-	eng := engine.New(engine.Config{Role: role, Policy: policy, Faults: cfg.Faults, Log: s.log,
-		Protocol: map[swap.Protocol]swap.SettlementProtocol{swap.ProtocolHTLC: proto}})
 
 	// Status de cada passo vai para o store (a API lista a partir dele).
 	steps, _ := eng.Subscribe()
@@ -301,6 +325,9 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 			case stp := <-steps:
 				if stp.Status != "" {
 					_ = st.SetStatus(ctx, stp.SwapID, stp.Status)
+				}
+				if k := stp.Decision.Kind; k == swap.ActDone || k == swap.ActAbort {
+					_ = st.MarkTerminal(ctx, stp.SwapID)
 				}
 			}
 		}
@@ -323,10 +350,11 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 		Policy:     policy,
 		LocalParty: func() swap.Party { return swap.Party{MSPID: cfg.MSPID, EVM: evm} },
 		Accept: func(_ context.Context, t *swap.SwapTerms) error {
-			if t.Protocol != swap.ProtocolHTLC {
-				return fmt.Errorf("protocol %s not enabled on this node", t.Protocol)
+			want, err := paymentContract(dep, t.Protocol)
+			if err != nil {
+				return err
 			}
-			if t.Price.Token != swap.Address(dep.DrexToken) || t.Networks.PaymentContract != swap.Address(dep.HTLCPayment) ||
+			if t.Price.Token != swap.Address(dep.DrexToken) || t.Networks.PaymentContract != want ||
 				t.Networks.BesuChainID != dep.ChainID {
 				return errors.New("terms reference unknown Besu deployment")
 			}
@@ -384,7 +412,7 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 
 	srv := &api.Server{
 		Info: api.Info{Node: cfg.Role, Role: role, MSPID: cfg.MSPID, EVM: bc.From().Hex(),
-			Protocols: []swap.Protocol{swap.ProtocolHTLC}, Faults: cfg.Faults},
+			Protocols: enabled, Faults: cfg.Faults, Attestor: ai},
 		Store: st, Engine: eng, Log: s.log, AllowOrigin: cfg.API.AllowOrigin,
 	}
 	if role == swap.RoleSeller {
@@ -398,8 +426,9 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 // propose: gera S, guarda cifrado ANTES de qualquer mensagem e negocia os termos com o Banco.
 func (s *SDK) propose(ctx context.Context, views *fscview.Manager, sec *secrets.FileStore, st *store.Store,
 	dep *besu.Deployment, req api.ProposeRequest) (api.SwapDTO, error) {
-	if req.Protocol != swap.ProtocolHTLC {
-		return api.SwapDTO{}, fmt.Errorf("protocol %s not enabled", req.Protocol)
+	payment, err := paymentContract(dep, req.Protocol)
+	if err != nil {
+		return api.SwapDTO{}, err
 	}
 	S, H, err := hashlock.New()
 	if err != nil {
@@ -419,7 +448,7 @@ func (s *SDK) propose(ctx context.Context, views *fscview.Manager, sec *secrets.
 		Price:    swap.Amount{Token: swap.Address(dep.DrexToken), Value: req.Price},
 		Hashlock: H, Nonce: nonce,
 		Networks: swap.NetworkRefs{FabricChannel: dep.FabricChannel, FabricNamespace: dep.FabricNamespace,
-			BesuChainID: dep.ChainID, PaymentContract: swap.Address(dep.HTLCPayment)},
+			BesuChainID: dep.ChainID, PaymentContract: payment},
 	}})
 	if err != nil {
 		return api.SwapDTO{}, err
@@ -434,6 +463,31 @@ func (s *SDK) propose(ctx context.Context, views *fscview.Manager, sec *secrets.
 		return api.SwapDTO{}, err
 	}
 	return api.ToDTO(rec), nil
+}
+
+func paymentContract(dep *besu.Deployment, p swap.Protocol) (swap.Address, error) {
+	switch p {
+	case swap.ProtocolHTLC:
+		return swap.Address(dep.HTLCPayment), nil
+	case swap.ProtocolCacti:
+		return swap.Address(dep.AttestedSettlement), nil
+	}
+	return swap.Address{}, fmt.Errorf("protocol %q not enabled", p)
+}
+
+// enableAttestor carrega (ou cria, em dev) a chave P-256 de atestador e habilita o responder.
+// Em produção, a chave é emitida pela CA da org e o certificado é validado no cadastro on-chain.
+func (s *SDK) enableAttestor(cfg *Config, channel, namespace string) (*api.AttestorInfo, error) {
+	k, err := loadOrCreateP256(filepath.Join(cfg.DataDir, "attestor.key"))
+	if err != nil {
+		return nil, err
+	}
+	token.SetAttestor(token.AttestorHooks{Signer: attest.Signer{MSPID: cfg.MSPID, Key: k}, Channel: channel, Namespace: namespace})
+	x, y, err := attest.PublicKeyXY(&k.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return &api.AttestorInfo{MSPID: cfg.MSPID, Qx: "0x" + hex.EncodeToString(x[:]), Qy: "0x" + hex.EncodeToString(y[:])}, nil
 }
 
 func trim0x(s string) string {

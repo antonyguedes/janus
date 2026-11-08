@@ -1,0 +1,94 @@
+package janus
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"os"
+
+	fscview "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
+
+	"janus/node/internal/attest"
+	"janus/node/internal/besu"
+	"janus/node/internal/swap"
+	"janus/node/internal/token"
+)
+
+// settlementAdapter implementa cacti.SettlementPort sobre besu.Client.
+type settlementAdapter struct{ c *besu.Client }
+
+func (a settlementAdapter) View(ctx context.Context, t *swap.SwapTerms) (swap.BesuView, error) {
+	return a.c.SettlementView(ctx, t.SwapID)
+}
+func (a settlementAdapter) Deposit(ctx context.Context, t *swap.SwapTerms, asset, recip [32]byte, minDeadline int64) error {
+	_, err := a.c.Deposit(ctx, t, asset, recip, minDeadline)
+	return err
+}
+func (a settlementAdapter) Settle(ctx context.Context, id, s [32]byte, att attest.FabricLockAttestation, sigs []attest.OrgSignature) error {
+	_, err := a.c.SettleAttested(ctx, id, s, att, sigs)
+	return err
+}
+func (a settlementAdapter) Refund(ctx context.Context, id [32]byte) error {
+	_, err := a.c.RefundDeposit(ctx, id)
+	return err
+}
+func (a settlementAdapter) Domain() attest.Domain { return a.c.AttestationDomain() }
+
+// fscCollector implementa cacti.Collector chamando a CollectView (relay por sessões FSC).
+type fscCollector struct {
+	views     *fscview.Manager
+	attestors []string
+}
+
+func (c *fscCollector) Collect(ctx context.Context, swapID, hash [32]byte, d attest.Domain) (attest.FabricLockAttestation, []attest.OrgSignature, error) {
+	if len(c.attestors) == 0 {
+		return attest.FabricLockAttestation{}, nil, errors.New("no attestors configured (janus.json: attestors)")
+	}
+	res, err := c.views.InitiateView(ctx, &token.CollectView{Collect: &token.Collect{
+		Request:   token.AttestRequest{SwapID: swapID, Hash: hash, ChainID: d.ChainID, Verifier: d.Verifier},
+		Attestors: c.attestors,
+	}})
+	if err != nil {
+		return attest.FabricLockAttestation{}, nil, err
+	}
+	out, ok := res.(*token.Collected)
+	if !ok {
+		return attest.FabricLockAttestation{}, nil, fmt.Errorf("collect: unexpected %T", res)
+	}
+	return out.Attestation, out.Signatures, nil
+}
+
+// loadOrCreateP256 lê uma chave EC P-256 (PEM PKCS#8) ou cria uma (DEV).
+func loadOrCreateP256(path string) (*ecdsa.PrivateKey, error) {
+	if raw, err := os.ReadFile(path); err == nil {
+		b, _ := pem.Decode(raw)
+		if b == nil {
+			return nil, fmt.Errorf("attestor key %s: not PEM", path)
+		}
+		k, err := x509.ParsePKCS8PrivateKey(b.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		ek, ok := k.(*ecdsa.PrivateKey)
+		if !ok || ek.Curve != elliptic.P256() {
+			return nil, fmt.Errorf("attestor key %s: not P-256", path)
+		}
+		return ek, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(k)
+	if err != nil {
+		return nil, err
+	}
+	return k, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+}

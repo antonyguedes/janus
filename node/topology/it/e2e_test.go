@@ -17,9 +17,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/hyperledger-labs/fabric-smart-client/integration"
 
 	"janus/node/internal/api"
 	"janus/node/internal/besu"
+	"janus/node/internal/engine"
 	"janus/node/internal/janus"
 	"janus/node/internal/swap"
 	jt "janus/node/internal/token"
@@ -90,7 +92,7 @@ func besuForE2E(t *testing.T) (rpc string, depPath string, dep *besu.Deployment)
 	return rpc, depPath, dep
 }
 
-func writeJanusConfigs(t *testing.T, rpc, depPath string, faults map[string]janus.Config) map[string]string {
+func writeJanusConfigs(t *testing.T, rpc, depPath, policy string, faults map[string]engine.Faults) map[string]string {
 	dir := t.TempDir()
 	t.Setenv("JANUS_CONFIG_DIR", dir)
 	urls := map[string]string{}
@@ -98,10 +100,8 @@ func writeJanusConfigs(t *testing.T, rpc, depPath string, faults map[string]janu
 		port := freePort(t)
 		c.API.Listen = fmt.Sprintf("127.0.0.1:%d", port)
 		c.DataDir = filepath.Join(dir, node+"-data")
-		c.Policy = "dev"
-		if f, ok := faults[node]; ok {
-			c.Faults = f.Faults
-		}
+		c.Policy = policy
+		c.Faults = faults[node]
 		raw, _ := json.MarshalIndent(c, "", "  ")
 		for _, id := range []string{node, node + ".0"} {
 			if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0o600); err != nil {
@@ -110,9 +110,10 @@ func writeJanusConfigs(t *testing.T, rpc, depPath string, faults map[string]janu
 		}
 		urls[node] = "http://" + c.API.Listen
 	}
-	write(jt.AuditorNode, janus.Config{Role: "registradora", MSPID: "RegistradoraMSP"})
+	write(jt.AuditorNode, janus.Config{Role: "registradora", MSPID: "RegistradoraMSP", Channel: "testchannel", Namespace: "tns"})
 	write("vendedora", janus.Config{Role: "vendedora", MSPID: "VendedoraMSP", Counterparty: "banco",
-		Besu: &janus.BesuConfig{RPC: rpc, KeyHex: keySeller, Deployment: depPath}})
+		Attestors: []string{jt.AuditorNode, "banco"},
+		Besu:      &janus.BesuConfig{RPC: rpc, KeyHex: keySeller, Deployment: depPath}})
 	write("banco", janus.Config{Role: "banco", MSPID: "BancoMSP",
 		Besu: &janus.BesuConfig{RPC: rpc, KeyHex: keyBuyer, Deployment: depPath}})
 	return urls
@@ -175,27 +176,71 @@ func waitStatus(t *testing.T, url, id string, want swap.Status, timeout time.Dur
 	return last
 }
 
-// TestE2EHTLC: Abordagem A ponta a ponta com os nós Janus reais (SDK do Janus dentro dos nós
-// FSC), Fabric 3.1.5 + Panurus via NWO e Besu (anvil, EVM Osaka). Tudo dirigido pelas APIs REST,
-// como o simulador faria.
-func TestE2EHTLC(t *testing.T) {
+func getInfo(t *testing.T, url string) api.Info {
+	t.Helper()
+	res, err := http.Get(url + "/api/v1/info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var in api.Info
+	if err := json.NewDecoder(res.Body).Decode(&in); err != nil {
+		t.Fatal(err)
+	}
+	return in
+}
+
+func hex32(t *testing.T, s string) [32]byte {
+	var out [32]byte
+	b := common.FromHex(s)
+	if len(b) != 32 {
+		t.Fatalf("bad hex32 %q", s)
+	}
+	copy(out[:], b)
+	return out
+}
+
+type e2eOpts struct {
+	proto    swap.Protocol
+	registro string
+	policy   string // dev | e2e
+	faults   map[string]engine.Faults
+	setup    func(urls map[string]string, rpc string, dep *besu.Deployment)
+}
+
+type e2eEnv struct {
+	ii   *integration.Infrastructure
+	urls map[string]string
+	rpc  string
+	dep  *besu.Deployment
+}
+
+func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 	if os.Getenv("FAB_BINS") == "" {
 		t.Skip("FAB_BINS não definido")
 	}
+	if o.policy == "" {
+		o.policy = "dev"
+	}
 	rpc, depPath, dep := besuForE2E(t)
-	urls := writeJanusConfigs(t, rpc, depPath, nil)
+	urls := writeJanusConfigs(t, rpc, depPath, o.policy, o.faults)
 	ii := startNetwork(t, Options{})
-	_ = ii
 	for _, u := range urls {
 		waitAPI(t, u)
 	}
+	if o.setup != nil {
+		o.setup(urls, rpc, dep)
+	}
+	return &e2eEnv{ii: ii, urls: urls, rpc: rpc, dep: dep}
+}
 
-	// 1) Registradora emite o recebível para a Vendedora
+// issueAndPropose: a Registradora emite o recebível e a Vendedora propõe o swap ao Banco.
+func issueAndPropose(t *testing.T, env *e2eEnv, o e2eOpts) (string, api.SwapDTO) {
 	var issued map[string]string
 	var code int
 	for i := 0; i < 30; i++ { // o auditor é registrado em background
-		if code = post(t, urls[jt.AuditorNode]+"/api/v1/recebiveis", api.IssueRequest{Owner: "vendedora",
-			Registro: "REG-E2E-1", Cedente: "Vendedora S.A.", Sacado: "Sacado Ltda", ValorFace: 1_250_000_00,
+		if code = post(t, env.urls[jt.AuditorNode]+"/api/v1/recebiveis", api.IssueRequest{Owner: "vendedora",
+			Registro: o.registro, Cedente: "Vendedora S.A.", Sacado: "Sacado Ltda", ValorFace: 1_250_000_00,
 			Vencimento: "2027-03-31"}, &issued); code == http.StatusCreated {
 			break
 		}
@@ -204,33 +249,114 @@ func TestE2EHTLC(t *testing.T) {
 	if code != http.StatusCreated || issued["linearId"] == "" {
 		t.Fatalf("emissão: %d %v", code, issued)
 	}
-
-	// 2) Vendedora propõe o swap ao Banco (termos assinados por sessão P2P do FSC)
 	var proposed api.SwapDTO
-	if code := post(t, urls["vendedora"]+"/api/v1/swaps", api.ProposeRequest{BuyerNode: "banco",
-		AssetID: issued["linearId"], Price: 1_200_000_00, Protocol: swap.ProtocolHTLC}, &proposed); code != http.StatusCreated {
+	if code := post(t, env.urls["vendedora"]+"/api/v1/swaps", api.ProposeRequest{BuyerNode: "banco",
+		AssetID: issued["linearId"], Price: 1_200_000_00, Protocol: o.proto}, &proposed); code != http.StatusCreated {
 		t.Fatalf("proposta: %d %+v", code, proposed)
 	}
-	if proposed.Terms == nil || proposed.Terms.T1-proposed.Terms.T2 < 90 {
+	if proposed.Terms == nil || proposed.Terms.T1-proposed.Terms.T2 < 90 || proposed.Protocol != o.proto {
 		t.Fatalf("termos: %+v", proposed)
 	}
+	return issued["linearId"], proposed
+}
 
-	// 3) Os motores dos dois nós levam o swap a "completed" sozinhos
-	waitStatus(t, urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
-	waitStatus(t, urls["vendedora"], proposed.SwapID, swap.StatusCompleted, time.Minute)
-
-	// 4) Conferência nas duas cadeias
-	k, _ := crypto.HexToECDSA(keySeller)
-	c, err := besu.Dial(context.Background(), rpc, k, dep)
+func drexOf(t *testing.T, env *e2eEnv, key string) uint64 {
+	k, _ := crypto.HexToECDSA(key)
+	c, err := besu.Dial(context.Background(), env.rpc, k, env.dep)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bal, _ := c.Balance(context.Background(), c.From())
-	if bal.Uint64() != 1_200_000_00 {
-		t.Fatalf("saldo Drex da Vendedora: %s", bal)
+	defer c.Close()
+	bal, err := c.Balance(context.Background(), c.From())
+	if err != nil {
+		t.Fatal(err)
 	}
-	ok(t, ii, "banco", "get", jt.Get{LinearID: issued["linearId"]})
-	if _, err := call(t, ii, "vendedora", "get", jt.Get{LinearID: issued["linearId"]}); err == nil {
-		t.Fatal("o NFT deveria estar com o Banco")
+	return bal.Uint64()
+}
+
+func nftWith(t *testing.T, env *e2eEnv, owner, other, linearID string) {
+	t.Helper()
+	ok(t, env.ii, owner, "get", jt.Get{LinearID: linearID})
+	if _, err := call(t, env.ii, other, "get", jt.Get{LinearID: linearID}); err == nil {
+		t.Fatalf("o NFT não deveria estar com %s", other)
 	}
+}
+
+// e2e executa o caminho feliz completo pelas APIs e confere as duas cadeias.
+func e2e(t *testing.T, o e2eOpts) {
+	env := bootE2E(t, o)
+	id, proposed := issueAndPropose(t, env, o)
+	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusCompleted, time.Minute)
+	if got := drexOf(t, env, keySeller); got != 1_200_000_00 {
+		t.Fatalf("saldo Drex da Vendedora: %d", got)
+	}
+	nftWith(t, env, "banco", "vendedora", id)
+}
+
+// TestE2EHTLC: Abordagem A ponta a ponta com os nós Janus reais (SDK do Janus dentro dos nós
+// FSC), Fabric 3.1.5 + Panurus via NWO e Besu (anvil, EVM Osaka). Tudo dirigido pelas APIs REST,
+// como o simulador faria.
+func TestE2EHTLC(t *testing.T) { e2e(t, e2eOpts{proto: swap.ProtocolHTLC, registro: "REG-E2E-A"}) }
+
+// TestE2EAttested: Abordagem B2 ponta a ponta. O Banco deposita antes do lock, a Vendedora coleta
+// as atestações da Registradora (auditoria) e do Banco (vault) por sessões FSC, e o
+// AttestedSettlement verifica a política 2-de-2 com P-256 nativo antes de liberar o Drex.
+func TestE2EAttested(t *testing.T) {
+	e2e(t, e2eOpts{proto: swap.ProtocolCacti, registro: "REG-E2E-B", setup: func(urls map[string]string, rpc string, dep *besu.Deployment) {
+		admin, _ := crypto.HexToECDSA(keyAdmin)
+		c, err := besu.Dial(context.Background(), rpc, admin, dep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var atts []besu.Attestor
+		for _, node := range []string{jt.AuditorNode, "banco"} {
+			in := getInfo(t, urls[node])
+			if in.Attestor == nil {
+				t.Fatalf("%s sem chave de atestador", node)
+			}
+			atts = append(atts, besu.Attestor{MSPID: in.Attestor.MSPID, Qx: hex32(t, in.Attestor.Qx), Qy: hex32(t, in.Attestor.Qy)})
+		}
+		if err := c.RegisterAttestors(context.Background(), 2, atts...); err != nil {
+			t.Fatal(err)
+		}
+	}})
+}
+
+// TestE2ESellerNoReveal (cenário 3, abordagem A): a Vendedora nunca revela S (falha injetada).
+// Os motores conduzem as duas reversões em rede real: refund no Besu depois de T2 (Banco) e
+// reclaim no Fabric depois de T1 + tolerância da auditoria (Vendedora).
+func TestE2ESellerNoReveal(t *testing.T) {
+	o := e2eOpts{proto: swap.ProtocolHTLC, registro: "REG-E2E-3", policy: "e2e",
+		faults: map[string]engine.Faults{"vendedora": {NoReveal: true}}}
+	env := bootE2E(t, o)
+	before := drexOf(t, env, keyBuyer)
+	id, proposed := issueAndPropose(t, env, o)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusBothLocked, time.Minute)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusReverted, 5*time.Minute)
+	if got := drexOf(t, env, keyBuyer); got != before {
+		t.Fatalf("o Banco deveria ter reavido o Drex: %d != %d", got, before)
+	}
+	if got := drexOf(t, env, keySeller); got != 0 {
+		t.Fatalf("a Vendedora não deveria ter recebido: %d", got)
+	}
+	nftWith(t, env, "vendedora", "banco", id)
+}
+
+// TestE2EBuyerCrashRecover (cenário 5): o nó do Banco cai com as duas pernas travadas, a
+// Vendedora revela S com o Banco fora do ar, e o Banco volta. A reconciliação de boot (store
+// SQLite + backfill do watcher a partir do checkpoint) faz o claim do NFT antes de T1.
+func TestE2EBuyerCrashRecover(t *testing.T) {
+	o := e2eOpts{proto: swap.ProtocolHTLC, registro: "REG-E2E-5", policy: "e2e"}
+	env := bootE2E(t, o)
+	id, proposed := issueAndPropose(t, env, o)
+	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusBothLocked, time.Minute)
+	env.ii.StopFSCNode("banco")
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusRevealed, time.Minute)
+	time.Sleep(3 * time.Second)
+	env.ii.StartFSCNode("banco")
+	waitAPI(t, env.urls["banco"])
+	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusCompleted, time.Minute)
+	nftWith(t, env, "banco", "vendedora", id)
 }

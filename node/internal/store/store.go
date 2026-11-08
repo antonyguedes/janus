@@ -72,7 +72,7 @@ func (s *Store) Put(ctx context.Context, r Record) error {
 
 // SetStatus atualiza só o status, chamado a cada passo do motor.
 func (s *Store) SetStatus(ctx context.Context, id [32]byte, st swap.Status) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE swaps SET status=?, terminal=?, updated_at=? WHERE id=?`,
+	res, err := s.db.ExecContext(ctx, `UPDATE swaps SET status=?, terminal=MAX(terminal, ?), updated_at=? WHERE id=?`,
 		string(st), boolInt(st.Terminal()), time.Now().UnixMilli(), idHex(id))
 	if err != nil {
 		return err
@@ -81,6 +81,14 @@ func (s *Store) SetStatus(ctx context.Context, id [32]byte, st swap.Status) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+// MarkTerminal marca o swap como encerrado para este nó (o motor decidiu done/abort), mesmo que
+// a contraparte ainda tenha ações pendentes (ex.: o Banco reaveu o Drex e a Vendedora ainda vai
+// fazer o reclaim do NFT). A reconciliação de boot ignora swaps terminais.
+func (s *Store) MarkTerminal(ctx context.Context, id [32]byte) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE swaps SET terminal=1, updated_at=? WHERE id=?`, time.Now().UnixMilli(), idHex(id))
+	return err
 }
 
 func (s *Store) Get(ctx context.Context, id [32]byte) (Record, error) {

@@ -108,4 +108,10 @@ func TestAPI(t *testing.T) {
 	if act, _ := st.List(ctx, true); len(act) != 0 {
 		t.Fatal("terminal não deveria ser ativo")
 	}
+	// done/abort do motor encerra o swap para o nó mesmo com status não terminal
+	_ = st.SetStatus(ctx, terms.SwapID, swap.StatusAssetLocked)
+	_ = st.MarkTerminal(ctx, terms.SwapID)
+	if act, _ := st.List(ctx, true); len(act) != 0 {
+		t.Fatal("MarkTerminal")
+	}
 }
