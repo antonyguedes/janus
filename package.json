@@ -1,0 +1,22 @@
+{
+  "name": "janus",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Janus — Liquidação Atômica Interbancária Cross-Chain (DvP): Hyperledger Fabric + Panurus ↔ Hyperledger Besu (Drex), via HTLC e Hyperledger Cacti",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "web": "npm run dev -w @janus/web",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

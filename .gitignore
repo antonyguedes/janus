@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+
+# Fabric / Besu gerados
+infra/fabric/organizations/
+infra/fabric/channel-artifacts/
+infra/fabric/bin/
+infra/fabric/config/
+infra/besu/data/
+infra/besu/generated/
+
+# Estado dos agentes
+.janus/
+deployments/*.local.json
