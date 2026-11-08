@@ -21,3 +21,9 @@ infra/besu/generated/
 # Estado dos agentes
 .janus/
 deployments/*.local.json
+
+# Simulador web (artefatos gerados)
+apps/web/public/janus.wasm
+apps/web/public/wasm_exec.js
+apps/web/dist/
+*.tsbuildinfo

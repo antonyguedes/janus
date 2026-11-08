@@ -12,11 +12,11 @@
   },
   "scripts": {
     "web": "npm run dev -w @janus/web",
+    "web:wasm": "npm run wasm -w @janus/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "typescript": "7.0.2"
   }
 }
