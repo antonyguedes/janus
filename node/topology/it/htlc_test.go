@@ -17,6 +17,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"janus/node/internal/hashlock"
+	"janus/node/internal/janus"
 	jt "janus/node/internal/token"
 )
 
@@ -33,6 +34,7 @@ func startNetwork(t *testing.T, o Options) *integration.Infrastructure {
 	for _, tp := range topos {
 		if f, ok := tp.(*fsc.Topology); ok {
 			f.AddSDK(&ffabtoken.SDK{})
+			f.AddSDK(&janus.SDK{}) // sem janus.json (JANUS_CONFIG_DIR) é um no-op
 			f.P2PCommunicationType = fsc.WebSocket
 		}
 	}

@@ -63,6 +63,7 @@ func Topology(o Options) []api.Topology {
 			token.WithDefaultOwnerIdentity(),
 		).
 		RegisterResponder(&jt.AcceptIssuedView{}, &jt.IssueView{}).
+		RegisterViewFactory("propose", &jt.ProposeViewFactory{}).
 		RegisterViewFactory("get", &jt.GetViewFactory{}).
 		RegisterViewFactory("lock", &jt.LockViewFactory{}).
 		RegisterViewFactory("reclaim", &jt.ReclaimViewFactory{}).
@@ -78,6 +79,7 @@ func Topology(o Options) []api.Topology {
 		).
 		RegisterResponder(&jt.AcceptIssuedView{}, &jt.IssueView{}).
 		RegisterResponder(&jt.LockAcceptView{}, &jt.LockView{}).
+		RegisterResponder(&jt.AcceptProposalView{}, &jt.ProposeView{}).
 		RegisterViewFactory("get", &jt.GetViewFactory{}).
 		RegisterViewFactory("expect", &jt.ExpectLockViewFactory{}).
 		RegisterViewFactory("claim", &jt.ClaimViewFactory{}).

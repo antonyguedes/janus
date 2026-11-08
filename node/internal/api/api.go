@@ -35,6 +35,29 @@ type Server struct {
 	Log    *slog.Logger
 	// AllowOrigin habilita CORS para o simulador (ex.: http://localhost:5173).
 	AllowOrigin string
+
+	// Propose (só na Vendedora) inicia a negociação de um swap com o Banco.
+	Propose func(r *http.Request, req ProposeRequest) (SwapDTO, error)
+	// Issue (só na Registradora) emite um recebível para um owner.
+	Issue func(r *http.Request, req IssueRequest) (string, error)
+}
+
+// ProposeRequest é o corpo de POST /api/v1/swaps.
+type ProposeRequest struct {
+	BuyerNode string        `json:"buyerNode"`
+	AssetID   string        `json:"assetId"`
+	Price     uint64        `json:"price"` // centavos de Drex
+	Protocol  swap.Protocol `json:"protocol"`
+}
+
+// IssueRequest é o corpo de POST /api/v1/recebiveis.
+type IssueRequest struct {
+	Owner      string `json:"owner"` // nó FSC do titular
+	Registro   string `json:"registro"`
+	Cedente    string `json:"cedente"`
+	Sacado     string `json:"sacado"`
+	ValorFace  uint64 `json:"valorFace"`
+	Vencimento string `json:"vencimento"`
 }
 
 // Handler monta as rotas.
@@ -46,6 +69,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/swaps/{id}", s.get)
 	mux.HandleFunc("POST /api/v1/swaps/{id}/kick", s.kick)
 	mux.HandleFunc("GET /api/v1/events", s.events)
+	mux.HandleFunc("POST /api/v1/swaps", s.propose)
+	mux.HandleFunc("POST /api/v1/recebiveis", s.issue)
 	return s.cors(mux)
 }
 
@@ -136,6 +161,52 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toDTO(rec, true))
 }
+
+func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
+	if s.Propose == nil {
+		writeErr(w, http.StatusMethodNotAllowed, errors.New("only the seller node proposes swaps"))
+		return
+	}
+	var req ProposeRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Protocol == "" {
+		req.Protocol = swap.ProtocolHTLC
+	}
+	if req.BuyerNode == "" || req.AssetID == "" || req.Price == 0 {
+		writeErr(w, http.StatusBadRequest, errors.New("buyerNode, assetId and price are required"))
+		return
+	}
+	dto, err := s.Propose(r, req)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, dto)
+}
+
+func (s *Server) issue(w http.ResponseWriter, r *http.Request) {
+	if s.Issue == nil {
+		writeErr(w, http.StatusMethodNotAllowed, errors.New("only the registradora issues recebiveis"))
+		return
+	}
+	var req IssueRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	id, err := s.Issue(r, req)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"linearId": id})
+}
+
+// ToDTO converte um registro para a representação pública.
+func ToDTO(r store.Record) SwapDTO { return toDTO(r, true) }
 
 func (s *Server) kick(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
