@@ -14,6 +14,7 @@ infra/fabric/organizations/
 infra/fabric/channel-artifacts/
 infra/fabric/bin/
 infra/fabric/config/
+infra/fabric/builders/
 infra/besu/data/
 infra/besu/generated/
 
