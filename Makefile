@@ -3,6 +3,9 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 BESU_DIR := infra/besu
+FABRIC_VERSION ?= 3.1.5
+FABRIC_CA_VERSION ?= 1.5.22
+FAB_BINS ?= $(CURDIR)/infra/fabric/bin
 COMPOSE_BESU := docker compose -f $(BESU_DIR)/docker-compose.yml
 export UID_GID := $(shell id -u):$(shell id -g)
 
@@ -16,6 +19,13 @@ deps: ## instala dependências (Foundry libs, módulos Go)
 	cd contracts && [ -d lib/openzeppelin-contracts ] || forge install --no-git OpenZeppelin/openzeppelin-contracts@v5.7.0
 	cd contracts && [ -d lib/forge-std ] || forge install --no-git foundry-rs/forge-std
 	cd node && go mod download
+
+# ------------------------------------------------------------------ Fabric
+.PHONY: fabric-bins
+fabric-bins: ## baixa os binários do Fabric/Fabric CA (versões do ADR-0001)
+	cd infra/fabric && curl -sSL --retry 5 https://github.com/hyperledger/fabric/releases/download/v$(FABRIC_VERSION)/hyperledger-fabric-linux-amd64-$(FABRIC_VERSION).tar.gz | tar xz
+	cd infra/fabric && curl -sSL --retry 5 https://github.com/hyperledger/fabric-ca/releases/download/v$(FABRIC_CA_VERSION)/hyperledger-fabric-ca-linux-amd64-$(FABRIC_CA_VERSION).tar.gz | tar xz
+	docker pull -q ghcr.io/hyperledger/fabric-baseos:3.1 && docker tag ghcr.io/hyperledger/fabric-baseos:3.1 hyperledger/fabric-baseos:latest
 
 # ------------------------------------------------------------------ redes
 .PHONY: up down besu-up besu-down besu-clean
@@ -54,3 +64,7 @@ test-contracts: ## forge test (unit + fuzz + invariantes)
 
 test-node: ## go test do nó Janus
 	cd node && go test ./... -cover
+
+.PHONY: it
+it: ## integração Fabric/Panurus (rede NWO real; requer make fabric-bins e Docker)
+	cd node/topology && FAB_BINS=$(FAB_BINS) go test ./it -count=1 -timeout 40m -v

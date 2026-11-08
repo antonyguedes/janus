@@ -24,3 +24,10 @@
 - Panurus e FSC andam juntos. O **upgrade do FSC só acontece quando o Panurus o adotar** no `go.mod` dele, para evitar uma combinação que ninguém testou.
 - O Besu 26.11.0 tem só 6 dias. Se surgir uma regressão, o fallback documentado é a **26.10.2**, porque o genesis não usa nenhum recurso exclusivo da 26.11.
 - O Panurus avisa que **não foi auditado**. Ver o ADR-0002 e o modelo de ameaças.
+
+## Adendo (Fase 2): build do Token Chaincode
+
+- A imagem `hyperledger/fabric-ccenv:3.1` traz **Go 1.26.4**, mas o Token Chaincode do Panurus v0.27.0 exige **Go 1.27.3**. Com o build padrão via Docker, a instalação falha. O erro aparece mascarado como `failed to marshal response: string field contains invalid UTF-8`, porque o log do build truncado vai dentro da resposta gRPC. O mesmo acontece com Fabric 3.1.4 e 3.1.5, então não é regressão do Fabric.
+- **Decisão:** o chaincode é compilado e executado por um **external builder do Janus** (`node/ci/external-builders/golang`: `detect`/`build`/`release`/`run`). Ele compila no host com o toolchain do projeto (`CGO_ENABLED=0`, `-trimpath`) e roda o processo com TLS mútuo a partir do `chaincode.json` fornecido pelo peer. O NWO do Panurus registra esse builder automaticamente (`<GOMOD>/../ci/external-builders/golang`).
+- O NWO empacota o chaincode no layout GOPATH quando o `main` está num módulo de dependência. As dependências são copiadas do module cache, já verificado pelo `go.sum` do projeto.
+- Os nós FSC usam **persistência SQLite** (`WithDefaultSqlitePersistence`) para vault, tokendb, auditdb e ttxdb.

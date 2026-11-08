@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# External builder do Janus para chaincode Go (contrato de external builders do Fabric).
+# Motivo: a imagem hyperledger/fabric-ccenv:3.1 traz Go 1.26.x e o Token Chaincode do Panurus
+# v0.27.0 exige Go 1.27.3. O build acontece no host, com o toolchain do projeto (ADR-0001).
+# O NWO (panurus/integration/nwo/fabricbuilder) procura este diretório em <GOMOD>/../ci/external-builders/golang.
+set -euo pipefail
+METADATA_DIR="$2"
+type=$(jq -r '.type // empty' "$METADATA_DIR/metadata.json" | tr '[:upper:]' '[:lower:]')
+[ "$type" = "golang" ]

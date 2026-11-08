@@ -25,7 +25,21 @@ $$
 - Valores padrão em `node/internal/swap/timepolicy.go`: em produção, `T1 = 4h` e `T2 = 2h`. Em dev, `T1 = 6 min`, `T2 = 3 min` e `Δ_min = 90 s`.
 - A fronteira é a mesma nas duas redes: **claim se `agora < T`, reversão se `agora ≥ T`**. O `HTLCPayment.sol` segue a mesma regra do `VerifyOwner` do Panurus.
 
-## Spike de reprodução (Fase 2)
+## Spike de reprodução (Fase 2): resultado
+
+**Ambiente:** topologia NWO (`node/topology/it`), Fabric 3.1.5, Panurus v0.27.0 (FabToken), 3 orgs, política `AND('RegistradoraMSP.member','BancoMSP.member')`.
+
+| Tentativa de reclaim (Vendedora) | Validador (relógio do endossante) | Auditor (relógio da Registradora) | Resultado |
+|---|---|---|---|
+| antes de T1 | recusa (`now < deadline`) | recusa | ❌ rejeitado |
+| **T1 + 2 s** | **aceitaria** (`now ≥ deadline`) | **recusa**: `audit: early reclaim refused (now … < deadline+grace …)` | ❌ rejeitado (camada 2) |
+| T1 + 30 s + 2 s | aceita | aceita | ✅ reclaim comitado, status `reclaimed` |
+
+A segunda linha é a evidência de que **a camada 2 bloqueia uma transação que os endossantes aprovariam**: o auditor decide com o próprio relógio, independentemente do relógio dos peers. Com a política `AND`, o relógio do peer da Vendedora nem participa. Um reclaim antecipado exigiria comprometer um peer da Registradora **e** um do Banco (camada 1) **e** a auditora (camada 2).
+
+**Limite do spike:** um peer com relógio adiantado não pode ser simulado. O validador roda em Go, que lê o relógio via vDSO (o `libfaketime` não intercepta), e os *time namespaces* do Linux não deslocam o `CLOCK_REALTIME`. A reprodução literal do "peer forjado" exigiria um binário de chaincode adulterado em uma única org. Fica registrada como teste manual opcional.
+
+### Roteiro original
 
 Na topologia NWO, rodar um peer da Vendedora com `faketime +5h` e tentar o reclaim antecipado:
 - com a política `OR(...)`, o ataque **passa** (reproduz);

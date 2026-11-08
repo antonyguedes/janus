@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# build SOURCE_DIR METADATA_DIR OUTPUT_DIR: compila o chaincode Go estaticamente no host.
+set -euo pipefail
+SOURCE_DIR="$1"; METADATA_DIR="$2"; OUTPUT_DIR="$3"
+pkg=$(jq -r '.path' "$METADATA_DIR/metadata.json")
+mkdir -p "$OUTPUT_DIR"
+if [ -f "$SOURCE_DIR/src/go.mod" ]; then
+  cd "$SOURCE_DIR/src"
+  CGO_ENABLED=0 go build -mod=readonly -trimpath -o "$OUTPUT_DIR/chaincode" "$pkg"
+else
+  # Pacote em layout GOPATH (src/<import path> com as dependências copiadas pelo NWO do
+  # module cache já verificado pelo go.sum do projeto).
+  cd "$SOURCE_DIR"
+  env -u GOFLAGS CGO_ENABLED=0 GO111MODULE=off GOPATH="$SOURCE_DIR" \
+    go build -trimpath -o "$OUTPUT_DIR/chaincode" "$pkg"
+fi
+if [ -d "$SOURCE_DIR/META-INF" ]; then
+  cp -a "$SOURCE_DIR/META-INF" "$OUTPUT_DIR/"
+fi

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# release BUILD_OUTPUT_DIR RELEASE_OUTPUT_DIR: publica META-INF (índices CouchDB, se houver).
+# O processo é iniciado por bin/run.
+set -euo pipefail
+BUILD_DIR="$1"; RELEASE_DIR="$2"
+if [ -d "$BUILD_DIR/META-INF" ]; then
+  mkdir -p "$RELEASE_DIR"
+  cp -a "$BUILD_DIR/META-INF/." "$RELEASE_DIR/"
+fi

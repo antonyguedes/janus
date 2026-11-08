@@ -139,3 +139,14 @@ func TestTokenTypeRoundTrip(t *testing.T) {
 		t.Fatal("empty recebivel")
 	}
 }
+
+func TestToFabricView(t *testing.T) {
+	h := [32]byte{1}
+	cases := map[string]int{"none": 0, "locked": 1, "claimed": 2, "reclaimed": 3, "": 0}
+	for in, want := range cases {
+		v := toFabricView(h, LockStatus{State: in, LinearID: "x", HashOK: true})
+		if int(v.State) != want || v.Hashlock != h || v.AssetID != "x" {
+			t.Fatalf("%q -> %+v", in, v)
+		}
+	}
+}

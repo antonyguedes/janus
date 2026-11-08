@@ -484,34 +484,8 @@ type StatusView struct{ *Status }
 
 func (v *StatusView) Call(ctx view.Context) (any, error) {
 	st := &LockStatus{State: "none"}
-	w := htlc.GetWallet(ctx, "")
-	if w == nil {
-		return nil, fmt.Errorf("status: wallet not found")
-	}
-	// 1) Ainda existe um token HTLC com este hash (como sender ou recipient)?
-	hw := htlc.Wallet(ctx, w)
-	for _, list := range []func() ([]*token2.UnspentToken, error){
-		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensAsSender(ctx.Context())) },
-		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensIterator(ctx.Context())) },
-	} {
-		toks, err := list()
-		if err != nil {
-			return nil, fmt.Errorf("status: list htlc: %w", err)
-		}
-		for _, t := range toks {
-			s, err := scriptOf(t.Owner)
-			if err != nil || string(s.HashInfo.Hash) != string(v.Hash) {
-				continue
-			}
-			st.State, st.Sender, st.Recipient, st.Deadline = "locked", s.Sender, s.Recipient, s.Deadline
-			st.HashOK = s.HashInfo.HashFunc == crypto.SHA256 && s.HashInfo.HashEncoding == encoding.None
-			if r, err := FromTokenType(t.Type); err == nil {
-				st.LinearID = r.LinearID
-			}
-			return json.Marshal(st)
-		}
-	}
-	// 2) Senão, os metadados no ledger dizem se houve lock e claim.
+	// 1) O ledger é a fonte da verdade do claim: quem não participou da transação de claim
+	//    (a Vendedora) pode ter um token HTLC desatualizado no vault.
 	tms, err := token.GetManagementService(ctx)
 	if err != nil {
 		return nil, err
@@ -540,6 +514,33 @@ func (v *StatusView) Call(ctx view.Context) (any, error) {
 	} else if len(pre) > 0 {
 		st.State, st.Preimage = "claimed", pre
 		return json.Marshal(st)
+	}
+	// 2) Ainda existe um token HTLC com este hash (como sender ou recipient)?
+	w := htlc.GetWallet(ctx, "")
+	if w == nil {
+		return nil, fmt.Errorf("status: wallet not found")
+	}
+	hw := htlc.Wallet(ctx, w)
+	for _, list := range []func() ([]*token2.UnspentToken, error){
+		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensAsSender(ctx.Context())) },
+		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensIterator(ctx.Context())) },
+	} {
+		toks, err := list()
+		if err != nil {
+			return nil, fmt.Errorf("status: list htlc: %w", err)
+		}
+		for _, t := range toks {
+			s, err := scriptOf(t.Owner)
+			if err != nil || string(s.HashInfo.Hash) != string(v.Hash) {
+				continue
+			}
+			st.State, st.Sender, st.Recipient, st.Deadline = "locked", s.Sender, s.Recipient, s.Deadline
+			st.HashOK = s.HashInfo.HashFunc == crypto.SHA256 && s.HashInfo.HashEncoding == encoding.None
+			if r, err := FromTokenType(t.Type); err == nil {
+				st.LinearID = r.LinearID
+			}
+			return json.Marshal(st)
+		}
 	}
 	if lk, err := get(htlc.LockKey(v.Hash)); err != nil {
 		return nil, fmt.Errorf("status: lock key: %w", err)

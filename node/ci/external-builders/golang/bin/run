@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# run BUILD_OUTPUT_DIR RUN_METADATA_DIR: inicia o chaincode como processo local do peer.
+# RUN_METADATA_DIR/chaincode.json traz chaincode_id, peer_address, mspid e os PEM de TLS.
+set -euo pipefail
+BUILD_DIR="$1"; RUN_DIR="$2"
+meta="$RUN_DIR/chaincode.json"
+field() { jq -r --arg k "$1" '.[$k] // empty' "$meta"; }
+
+export CORE_CHAINCODE_ID_NAME="$(field chaincode_id)"
+export CORE_PEER_LOCALMSPID="$(field mspid)"
+peer_address="$(field peer_address)"
+
+root_cert="$(field root_cert)"
+if [ -n "$root_cert" ]; then
+  printf '%s' "$root_cert" > "$RUN_DIR/root.crt"
+  printf '%s' "$(field client_cert)" > "$RUN_DIR/client.crt"
+  printf '%s' "$(field client_key)" > "$RUN_DIR/client.key"
+  chmod 600 "$RUN_DIR/client.key"
+  export CORE_PEER_TLS_ENABLED=true
+  export CORE_PEER_TLS_ROOTCERT_FILE="$RUN_DIR/root.crt"
+  export CORE_TLS_CLIENT_CERT_FILE="$RUN_DIR/client.crt"
+  export CORE_TLS_CLIENT_KEY_FILE="$RUN_DIR/client.key"
+else
+  export CORE_PEER_TLS_ENABLED=false
+fi
+
+exec "$BUILD_DIR/chaincode" -peer.address="$peer_address"
