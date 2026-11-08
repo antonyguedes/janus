@@ -31,9 +31,22 @@ func TestPoliciesValid(t *testing.T) {
 	}
 }
 
+const base = 1_900_000_000
+
 func validTerms(t *testing.T) (*SwapTerms, TimePolicy, time.Time) {
-	w := newWorld(ProtocolHTLC)
-	return w.t, w.p, time.Unix(base, 0)
+	p := DevPolicy()
+	s := sha256.Sum256([]byte("sim-secret"))
+	h := sha256.Sum256(s[:])
+	seller := Party{MSPID: "VendedoraMSP", FSCIdentity: []byte("vendedora"), EVM: Address{1}}
+	buyer := Party{MSPID: "BancoMSP", FSCIdentity: []byte("banco"), EVM: Address{2}}
+	tt := &SwapTerms{
+		Protocol: ProtocolHTLC, AssetID: "recebivel-0001", Seller: seller, Buyer: buyer,
+		Price: Amount{Token: Address{0xd}, Value: 1_000_00}, Hashlock: h, Nonce: [32]byte{9},
+		T1: base + int64(p.T1Offset/time.Second), T2: base + int64(p.T2Offset/time.Second),
+		Networks: NetworkRefs{FabricChannel: "recebiveis", FabricNamespace: "tcc", BesuChainID: 1337, PaymentContract: Address{0xc}},
+	}
+	tt.SwapID = ComputeSwapID(h, seller, buyer, tt.Nonce)
+	return tt, p, time.Unix(base, 0)
 }
 
 func TestTermsValidate(t *testing.T) {
