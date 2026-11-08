@@ -33,6 +33,11 @@ besu-down: ## para o Besu
 besu-clean: besu-down ## apaga o estado e as chaves do Besu
 	rm -rf $(BESU_DIR)/data $(BESU_DIR)/generated
 
+# ------------------------------------------------------------------ geração
+.PHONY: bindings
+bindings: ## regenera os bindings Go (abigen v2) a partir dos contratos
+	./scripts/gen-bindings.sh
+
 # ------------------------------------------------------------------ testes
 .PHONY: test test-contracts test-node test-vectors vectors
 test: test-vectors test-contracts test-node ## roda todos os testes offline
