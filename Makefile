@@ -72,5 +72,12 @@ it: ## integração + E2E em rede real (NWO Fabric 3.1.5 + anvil; requer make fa
 e2e: ## só os E2E (A, B2, cenário 3 e cenário 5) com os nós Janus reais
 	cd node/topology && FAB_BINS=$(FAB_BINS) go test ./it -run TestE2E -count=1 -timeout 90m -v
 
+.PHONY: demo demo-besu
+demo: ## sobe tudo (Fabric NWO + anvil + contratos + 3 nós Janus, APIs em :8080-8082); Ctrl-C derruba
+	cd node/topology && FAB_BINS=$(FAB_BINS) go run ./cmd/janus-net -dir $(CURDIR)/.janus/net
+
+demo-besu: ## como demo, mas usando o Besu QBFT de `make besu-up`
+	cd node/topology && FAB_BINS=$(FAB_BINS) go run ./cmd/janus-net -dir $(CURDIR)/.janus/net -besu http://localhost:8545
+
 web: ## simulador web (compila o núcleo para WASM e sobe o Vite)
 	npm run web

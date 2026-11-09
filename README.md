@@ -45,6 +45,17 @@ make fabric-bins   # binários do Fabric 3.1.5 / CA 1.5.22 (só para a integraç
 | E2E (Fabric NWO + anvil + 3 nós Janus): A, B2, cenário 3, cenário 5 | `make it` (os testes `TestE2E*`) |
 | Simulador web | `npm run test -w @janus/web` |
 
+## Demonstração completa
+
+```sh
+make fabric-bins   # uma vez
+make demo          # Fabric 3.1.5 + Panurus (NWO) + anvil + contratos + 3 nós Janus
+# ou, sobre o Besu QBFT real de 4 validadores:
+make besu-up && make demo-besu
+```
+
+As APIs ficam em `:8080` (Registradora), `:8081` (Vendedora) e `:8082` (Banco). A governança B2 (atestadores 2-de-2) é cadastrada automaticamente. Em outro terminal, `npm run web` e depois abra `http://localhost:5173/?mode=live`. Ctrl-C derruba tudo.
+
 ## Simulador web
 
 ```sh
