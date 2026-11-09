@@ -528,9 +528,14 @@ func (v *StatusView) Call(ctx view.Context) (any, error) {
 		return nil, fmt.Errorf("status: wallet not found")
 	}
 	hw := htlc.Wallet(ctx, w)
+	// As listagens padrão do Panurus só trazem locks NÃO expirados. Depois de T1 o lock continua
+	// no ledger até o reclaim, por isso os expirados também precisam ser consultados. Sem isso, o
+	// lock expirado parecia "reclaimed" e a Vendedora encerrava sem reaver o NFT.
 	for _, list := range []func() ([]*token2.UnspentToken, error){
 		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensAsSender(ctx.Context())) },
 		func() ([]*token2.UnspentToken, error) { return collect(hw.ListTokensIterator(ctx.Context())) },
+		func() ([]*token2.UnspentToken, error) { return unspent(hw.ListExpired(ctx.Context())) },
+		func() ([]*token2.UnspentToken, error) { return unspent(hw.ListExpiredReceivedTokens(ctx.Context())) },
 	} {
 		toks, err := list()
 		if err != nil {
@@ -572,6 +577,13 @@ func collect(it iterators.Iterator[*token2.UnspentToken], err error) ([]*token2.
 }
 
 var errNotHTLC = errors.New("not an htlc owner")
+
+func unspent(u *token2.UnspentTokens, err error) ([]*token2.UnspentToken, error) {
+	if err != nil || u == nil {
+		return nil, err
+	}
+	return u.Tokens, nil
+}
 
 func scriptOf(owner []byte) (*htlc.Script, error) {
 	ti, err := identity.UnmarshalTypedIdentity(owner)

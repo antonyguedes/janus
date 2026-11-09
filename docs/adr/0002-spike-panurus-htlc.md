@@ -34,3 +34,7 @@ Nos outputs de **transferência** devolvidos por `ttx.Auditor.Audit` (Panurus v0
 **Decisão:** a auditoria do Janus usa o dono no ledger (`ledgerOwner`) para detectar scripts HTLC, validar novos locks (`CheckLockScript`), classificar claim/reclaim e registrar a evidência de atestação (B2). Há teste de regressão em `TestAuditSeesHTLCLockByLedgerOwner`. Candidato a reporte upstream.
 
 O mesmo vale para `Type`: `token.Output` embute `token.Token` e declara um `Type` próprio. A auditoria lê o primeiro não vazio.
+
+## Adendo (Fase 6): locks expirados somem das listagens
+
+`htlc.Wallet(...).ListTokensAsSender` e `ListTokensIterator` só devolvem locks **não expirados** (`SelectNonExpired`). Depois de T1 o lock continua no ledger até o reclaim, mas some dessas listagens. Inferir o estado só por elas fazia um lock expirado parecer "reclaimed", e a Vendedora honesta encerrava o swap **sem reaver o NFT**. O E2E do cenário 3 em rede real revelou o problema. A `StatusView` agora também consulta `ListExpired` (sender) e `ListExpiredReceivedTokens` (recipient), e o `TestFabricHTLC` confere que um lock expirado continua `locked` até o reclaim.

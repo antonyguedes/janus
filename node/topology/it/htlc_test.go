@@ -9,15 +9,11 @@ import (
 	"testing"
 	"time"
 
-	ptoken "github.com/LFDT-Panurus/panurus/integration/token"
-	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/ffabtoken"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/onsi/gomega"
 
 	"janus/node/internal/hashlock"
-	"janus/node/internal/janus"
 	jt "janus/node/internal/token"
 )
 
@@ -30,31 +26,12 @@ func startNetwork(t *testing.T, o Options) *integration.Infrastructure {
 		t.Skip("FAB_BINS não definido: teste de integração Fabric pulado")
 	}
 	gomega.RegisterTestingT(t)
-	topos := Topology(o)
-	for _, tp := range topos {
-		if f, ok := tp.(*fsc.Topology); ok {
-			f.AddSDK(&ffabtoken.SDK{})
-			f.AddSDK(&janus.SDK{}) // sem janus.json (JANUS_CONFIG_DIR) é um no-op
-			f.P2PCommunicationType = fsc.WebSocket
-		}
+	n, err := StartNetwork(o)
+	t.Cleanup(n.Stop) // derruba a rede mesmo se o Setup falhar no meio
+	if err != nil {
+		t.Fatal(err)
 	}
-	ts := ptoken.NewTestSuite(func() int { return 21000 }, topos)
-	// Derruba a rede mesmo se o Setup falhar no meio (o gomega reporta via panic).
-	t.Cleanup(func() {
-		if ts.II != nil {
-			ts.TearDown()
-		}
-		ptoken.CleanupBuildArtifacts()
-	})
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("setup da rede falhou: %v", r)
-			}
-		}()
-		ts.Setup()
-	}()
-	return ts.II
+	return n.II
 }
 
 func call(t *testing.T, ii *integration.Infrastructure, node, fn string, in any) ([]byte, error) {
@@ -189,6 +166,10 @@ func TestFabricHTLC(t *testing.T) {
 		time.Sleep(time.Until(T1) + 2*time.Second)
 		if _, err := call(t, ii, "vendedora", "reclaim", jt.Reclaim{Hash: h[:]}); err == nil {
 			t.Fatal("reclaim dentro da tolerância do auditor deveria falhar (ADR-0004 camada 2)")
+		}
+		// regressão: um lock expirado (depois de T1) ainda está travado, não "reclaimed"
+		if st := status(t, ii, "vendedora", h); st.State != "locked" {
+			t.Fatalf("lock expirado deveria continuar locked: %s", brief(st))
 		}
 		time.Sleep(time.Until(T1.Add(jt.DefaultAudit.ReclaimGrace)) + 2*time.Second)
 		ok(t, ii, "vendedora", "reclaim", jt.Reclaim{Hash: h[:]})

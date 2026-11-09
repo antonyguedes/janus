@@ -5,88 +5,46 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 
 	"janus/node/internal/api"
 	"janus/node/internal/besu"
 	"janus/node/internal/engine"
-	"janus/node/internal/janus"
 	"janus/node/internal/swap"
 	jt "janus/node/internal/token"
 )
 
-// Chaves PÚBLICAS de desenvolvimento do anvil.
 const (
-	keyAdmin  = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-	keySeller = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-	keyBuyer  = "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+	keyAdmin  = KeyAdmin
+	keySeller = KeySeller
+	keyBuyer  = KeyBuyer
 )
-
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
 
 // besuForE2E sobe um anvil (EVM Osaka, gas zero, chainId 1337) e faz o deploy dos contratos.
 func besuForE2E(t *testing.T) (rpc string, depPath string, dep *besu.Deployment) {
 	t.Helper()
-	bin, err := exec.LookPath("anvil")
-	if err != nil {
+	if _, err := exec.LookPath("anvil"); err != nil {
 		t.Skip("anvil não encontrado")
 	}
-	port := freePort(t)
-	cmd := exec.Command(bin, "--port", fmt.Sprint(port), "--hardfork", "osaka", "--block-time", "1",
-		"--block-base-fee-per-gas", "0", "--gas-price", "0", "--chain-id", "1337", "--silent")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	rpc = fmt.Sprintf("http://127.0.0.1:%d", port)
-	var eth *ethclient.Client
-	for range 100 {
-		if eth, err = ethclient.Dial(rpc); err == nil {
-			if _, err = eth.ChainID(context.Background()); err == nil {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	port, err := FreePort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eth.Close()
-	addr := func(h string) common.Address {
-		k, _ := crypto.HexToECDSA(h)
-		return crypto.PubkeyToAddress(k.PublicKey)
-	}
-	admin, _ := crypto.HexToECDSA(keyAdmin)
-	dep, err = besu.DeployAll(context.Background(), eth, admin, besu.DeploySpec{
-		Channel: "testchannel", Namespace: "tns",
-		Allow: []common.Address{addr(keySeller), addr(keyBuyer)},
-		Mint:  map[common.Address]*big.Int{addr(keyBuyer): big.NewInt(100_000_000_00)},
-	})
+	rpc, stop, err := StartAnvil(port)
 	if err != nil {
 		t.Fatal(err)
 	}
-	depPath = filepath.Join(t.TempDir(), "1337.local.json")
-	raw, _ := json.Marshal(dep)
-	if err := os.WriteFile(depPath, raw, 0o600); err != nil {
+	t.Cleanup(stop)
+	dep, depPath, err = DeployBesu(context.Background(), rpc, t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
 	return rpc, depPath, dep
@@ -95,27 +53,10 @@ func besuForE2E(t *testing.T) (rpc string, depPath string, dep *besu.Deployment)
 func writeJanusConfigs(t *testing.T, rpc, depPath, policy string, faults map[string]engine.Faults) map[string]string {
 	dir := t.TempDir()
 	t.Setenv("JANUS_CONFIG_DIR", dir)
-	urls := map[string]string{}
-	write := func(node string, c janus.Config) {
-		port := freePort(t)
-		c.API.Listen = fmt.Sprintf("127.0.0.1:%d", port)
-		c.DataDir = filepath.Join(dir, node+"-data")
-		c.Policy = policy
-		c.Faults = faults[node]
-		raw, _ := json.MarshalIndent(c, "", "  ")
-		for _, id := range []string{node, node + ".0"} {
-			if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		urls[node] = "http://" + c.API.Listen
+	urls, err := WriteJanusConfigs(NodeConfig{Dir: dir, RPC: rpc, Deployment: depPath, Policy: policy, Faults: faults})
+	if err != nil {
+		t.Fatal(err)
 	}
-	write(jt.AuditorNode, janus.Config{Role: "registradora", MSPID: "RegistradoraMSP", Channel: "testchannel", Namespace: "tns"})
-	write("vendedora", janus.Config{Role: "vendedora", MSPID: "VendedoraMSP", Counterparty: "banco",
-		Attestors: []string{jt.AuditorNode, "banco"},
-		Besu:      &janus.BesuConfig{RPC: rpc, KeyHex: keySeller, Deployment: depPath}})
-	write("banco", janus.Config{Role: "banco", MSPID: "BancoMSP",
-		Besu: &janus.BesuConfig{RPC: rpc, KeyHex: keyBuyer, Deployment: depPath}})
 	return urls
 }
 

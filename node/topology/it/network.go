@@ -1,0 +1,197 @@
+package it
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
+
+	ptoken "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/ffabtoken"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/hyperledger-labs/fabric-smart-client/integration"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
+
+	"janus/node/internal/besu"
+	"janus/node/internal/engine"
+	"janus/node/internal/janus"
+	jt "janus/node/internal/token"
+)
+
+// Chaves PÚBLICAS de desenvolvimento do Foundry/anvil (também na allowlist de infra/besu).
+const (
+	KeyAdmin  = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+	KeySeller = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+	KeyBuyer  = "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+)
+
+// Network é uma rede Janus completa: Fabric 3.x + Panurus (NWO) com os três nós FSC rodando a
+// SDK do Janus. Usada pelos testes e pelo runner de demonstração (cmd/janus-net).
+type Network struct {
+	II    *integration.Infrastructure
+	suite *ptoken.TestSuite
+}
+
+// StartNetwork gera e sobe a topologia. O chamador precisa ter registrado um fail handler do
+// gomega (os testes usam RegisterTestingT, o runner usa um handler que entra em pânico).
+func StartNetwork(o Options) (n *Network, err error) {
+	topos := Topology(o)
+	for _, tp := range topos {
+		if f, ok := tp.(*fsc.Topology); ok {
+			f.AddSDK(&ffabtoken.SDK{})
+			f.AddSDK(&janus.SDK{}) // sem janus.json (JANUS_CONFIG_DIR) é um no-op
+			f.P2PCommunicationType = fsc.WebSocket
+		}
+	}
+	n = &Network{suite: ptoken.NewTestSuite(func() int { return 21000 }, topos)}
+	defer func() {
+		if r := recover(); r != nil {
+			n.Stop()
+			err = fmt.Errorf("setup da rede falhou: %v", r)
+		}
+	}()
+	n.suite.Setup()
+	n.II = n.suite.II
+	return n, nil
+}
+
+// Stop derruba a rede (idempotente) e remove os binários compilados pelo NWO.
+func (n *Network) Stop() {
+	if n == nil || n.suite == nil {
+		return
+	}
+	if n.suite.II != nil {
+		n.suite.TearDown()
+		n.suite.II = nil
+	}
+	ptoken.CleanupBuildArtifacts()
+}
+
+// FreePort devolve uma porta TCP livre em 127.0.0.1.
+func FreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func addrOf(hexKey string) common.Address {
+	k, _ := crypto.HexToECDSA(hexKey)
+	return crypto.PubkeyToAddress(k.PublicKey)
+}
+
+// StartAnvil sobe um anvil com EVM Osaka, gas zero e chainId 1337 (as mesmas condições do Besu
+// QBFT local). Devolve a URL e a função de parada.
+func StartAnvil(port int) (string, func(), error) {
+	bin, err := exec.LookPath("anvil")
+	if err != nil {
+		return "", nil, fmt.Errorf("anvil não encontrado no PATH: %w", err)
+	}
+	cmd := exec.Command(bin, "--port", fmt.Sprint(port), "--hardfork", "osaka", "--block-time", "1",
+		"--block-base-fee-per-gas", "0", "--gas-price", "0", "--chain-id", "1337", "--silent")
+	if err := cmd.Start(); err != nil {
+		return "", nil, err
+	}
+	stop := func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	for range 100 {
+		if c, err := ethclient.Dial(url); err == nil {
+			_, err = c.ChainID(context.Background())
+			c.Close()
+			if err == nil {
+				return url, stop, nil
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	stop()
+	return "", nil, fmt.Errorf("anvil não respondeu em %s", url)
+}
+
+// DeployBesu faz o deploy dos contratos (canal/namespace da topologia NWO), coloca Vendedora e
+// Banco na allowlist, emite Drex para o Banco e grava o deployment em dir.
+func DeployBesu(ctx context.Context, rpc, dir string) (*besu.Deployment, string, error) {
+	eth, err := ethclient.DialContext(ctx, rpc)
+	if err != nil {
+		return nil, "", err
+	}
+	defer eth.Close()
+	admin, _ := crypto.HexToECDSA(KeyAdmin)
+	dep, err := besu.DeployAll(ctx, eth, admin, besu.DeploySpec{
+		Channel: "testchannel", Namespace: "tns",
+		Allow: []common.Address{addrOf(KeySeller), addrOf(KeyBuyer)},
+		Mint:  map[common.Address]*big.Int{addrOf(KeyBuyer): big.NewInt(100_000_000_00)},
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%d.local.json", dep.ChainID))
+	raw, _ := json.MarshalIndent(dep, "", "  ")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return nil, "", err
+	}
+	return dep, path, nil
+}
+
+// NodeConfig parametriza a escrita dos janus.json.
+type NodeConfig struct {
+	Dir         string // destino (vira JANUS_CONFIG_DIR)
+	RPC         string
+	Deployment  string
+	Policy      string                   // dev | e2e | prod
+	Ports       map[string]int           // porta da API por nó (0 = livre)
+	Faults      map[string]engine.Faults // falhas injetadas por nó
+	AllowOrigin string                   // CORS da API (simulador web)
+}
+
+// WriteJanusConfigs grava o janus.json de cada nó e devolve as URLs das APIs.
+// O chamador exporta JANUS_CONFIG_DIR=Dir antes de subir a rede (os nós herdam o ambiente).
+func WriteJanusConfigs(c NodeConfig) (map[string]string, error) {
+	urls := map[string]string{}
+	write := func(node string, jc janus.Config) error {
+		port := c.Ports[node]
+		if port == 0 {
+			p, err := FreePort()
+			if err != nil {
+				return err
+			}
+			port = p
+		}
+		jc.API.Listen = fmt.Sprintf("127.0.0.1:%d", port)
+		jc.API.AllowOrigin = c.AllowOrigin
+		jc.DataDir = filepath.Join(c.Dir, node+"-data")
+		jc.Policy = c.Policy
+		jc.Faults = c.Faults[node]
+		raw, _ := json.MarshalIndent(jc, "", "  ")
+		for _, id := range []string{node, node + ".0"} { // o NWO pode sufixar a réplica
+			if err := os.WriteFile(filepath.Join(c.Dir, id+".json"), raw, 0o600); err != nil {
+				return err
+			}
+		}
+		urls[node] = "http://" + jc.API.Listen
+		return nil
+	}
+	besuCfg := func(key string) *janus.BesuConfig {
+		return &janus.BesuConfig{RPC: c.RPC, KeyHex: key, Deployment: c.Deployment}
+	}
+	for node, jc := range map[string]janus.Config{
+		jt.AuditorNode: {Role: "registradora", MSPID: "RegistradoraMSP", Channel: "testchannel", Namespace: "tns"},
+		"vendedora": {Role: "vendedora", MSPID: "VendedoraMSP", Counterparty: "banco",
+			Attestors: []string{jt.AuditorNode, "banco"}, Besu: besuCfg(KeySeller)},
+		"banco": {Role: "banco", MSPID: "BancoMSP", Besu: besuCfg(KeyBuyer)},
+	} {
+		if err := write(node, jc); err != nil {
+			return nil, err
+		}
+	}
+	return urls, nil
+}
