@@ -21,6 +21,14 @@ import (
 // Executar: make it   (ou: cd node/topology && FAB_BINS=... go test ./it -run . -timeout 30m)
 
 func startNetwork(t *testing.T, o Options) *integration.Infrastructure {
+	n, err := startNetworkN(t, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n.II
+}
+
+func startNetworkN(t *testing.T, o Options) (*Network, error) {
 	t.Helper()
 	if os.Getenv("FAB_BINS") == "" {
 		t.Skip("FAB_BINS não definido: teste de integração Fabric pulado")
@@ -28,10 +36,7 @@ func startNetwork(t *testing.T, o Options) *integration.Infrastructure {
 	gomega.RegisterTestingT(t)
 	n, err := StartNetwork(o)
 	t.Cleanup(n.Stop) // derruba a rede mesmo se o Setup falhar no meio
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n.II
+	return n, err
 }
 
 func call(t *testing.T, ii *integration.Infrastructure, node, fn string, in any) ([]byte, error) {

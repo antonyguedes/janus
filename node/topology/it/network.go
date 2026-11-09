@@ -1,14 +1,20 @@
 package it
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
 	ptoken "github.com/LFDT-Panurus/panurus/integration/token"
@@ -17,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 
 	"janus/node/internal/besu"
@@ -151,7 +158,13 @@ type NodeConfig struct {
 	Ports       map[string]int           // porta da API por nó (0 = livre)
 	Faults      map[string]engine.Faults // falhas injetadas por nó
 	AllowOrigin string                   // CORS da API (simulador web)
+	// Cacti: porta do servidor Cacti de cada nó atestador (Registradora, Banco). Quando
+	// presente, o atestador exige a prova do ledger via conector Fabric do Cacti (ADR-0005).
+	Cacti map[string]int
 }
+
+// RequiredEndorsers é a política de endosso do Token Chaincode (PolicyJanus) vista pelo atestador.
+var RequiredEndorsers = []string{"RegistradoraMSP", "BancoMSP"}
 
 // WriteJanusConfigs grava o janus.json de cada nó e devolve as URLs das APIs.
 // O chamador exporta JANUS_CONFIG_DIR=Dir antes de subir a rede (os nós herdam o ambiente).
@@ -171,6 +184,10 @@ func WriteJanusConfigs(c NodeConfig) (map[string]string, error) {
 		jc.DataDir = filepath.Join(c.Dir, node+"-data")
 		jc.Policy = c.Policy
 		jc.Faults = c.Faults[node]
+		if p, ok := c.Cacti[node]; ok {
+			jc.Cacti = &janus.CactiConfig{URL: fmt.Sprintf("http://127.0.0.1:%d", p), KeychainID: "janus",
+				KeychainRef: node, RequiredEndorsers: RequiredEndorsers}
+		}
 		raw, _ := json.MarshalIndent(jc, "", "  ")
 		for _, id := range []string{node, node + ".0"} { // o NWO pode sufixar a réplica
 			if err := os.WriteFile(filepath.Join(c.Dir, id+".json"), raw, 0o600); err != nil {
@@ -194,4 +211,135 @@ func WriteJanusConfigs(c NodeConfig) (map[string]string, error) {
 		}
 	}
 	return urls, nil
+}
+
+// CactiIdentity é a credencial Fabric de uma org para o conector do Cacti (keychain).
+type CactiIdentity struct {
+	MSPID       string `json:"mspId"`
+	Certificate string `json:"certificate"`
+	PrivateKey  string `json:"privateKey"`
+}
+
+// FabricConnectionProfile devolve o connection profile da rede (formato fabric-network/Cacti),
+// com os endpoints em 127.0.0.1, e a identidade Admin de cada org (MSP ID -> credencial).
+func (n *Network) FabricConnectionProfile() (map[string]any, map[string]CactiIdentity, error) {
+	var fp *fabric.Platform
+	for _, p := range n.II.NWO.Platforms {
+		if f, ok := p.(*fabric.Platform); ok {
+			fp = f
+			break
+		}
+	}
+	if fp == nil {
+		return nil, nil, fmt.Errorf("plataforma Fabric não encontrada")
+	}
+	cp := fp.ConnectionProfile("janus", false)
+	raw, err := json.Marshal(cp)
+	if err != nil {
+		return nil, nil, err
+	}
+	// o NWO aponta para o host "fabric" (uso em containers); o conector roda no host
+	raw = bytes.ReplaceAll(raw, []byte("grpcs://fabric:"), []byte("grpcs://127.0.0.1:"))
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, nil, err
+	}
+	ids := map[string]CactiIdentity{}
+	for _, org := range cp.Organizations {
+		cert, _ := org.SignedCert["pem"].(string)
+		key, _ := org.AdminPrivateKey["pem"].(string)
+		ids[org.MSPID] = CactiIdentity{MSPID: org.MSPID, Certificate: cert, PrivateKey: key}
+	}
+	return out, ids, nil
+}
+
+// CactiServer é um servidor Hyperledger Cacti (infra/cacti/relay) de uma org atestadora.
+type CactiServer struct {
+	Node string
+	URL  string
+	cmd  *exec.Cmd
+}
+
+// Stop encerra o servidor (SIGTERM, depois SIGKILL).
+func (c *CactiServer) Stop() {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return
+	}
+	_ = c.cmd.Process.Signal(syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() { _ = c.cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = c.cmd.Process.Kill()
+		<-done
+	}
+}
+
+// CactiServerScript é o caminho de infra/cacti/relay/src/server.mjs.
+func CactiServerScript() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "infra", "cacti", "relay", "src", "server.mjs")
+}
+
+// CactiAvailable informa se Node e as dependências do Cacti (npm install na raiz) estão presentes.
+func CactiAvailable() error {
+	if _, err := exec.LookPath("node"); err != nil {
+		return fmt.Errorf("node não encontrado: %w", err)
+	}
+	mod := filepath.Join(filepath.Dir(CactiServerScript()), "..", "..", "..", "..", "node_modules",
+		"@hyperledger-cacti", "cactus-plugin-ledger-connector-fabric")
+	if _, err := os.Stat(mod); err != nil {
+		return fmt.Errorf("dependências do Cacti ausentes (rode npm install na raiz): %w", err)
+	}
+	return nil
+}
+
+// StartCacti sobe o servidor Cacti de um nó atestador com a identidade da org e espera ficar pronto.
+func StartCacti(dir, node string, port int, ccp map[string]any, id CactiIdentity, logOut io.Writer) (*CactiServer, error) {
+	ccpPath := filepath.Join(dir, "ccp.json")
+	raw, _ := json.Marshal(ccp)
+	if err := os.WriteFile(ccpPath, raw, 0o600); err != nil {
+		return nil, err
+	}
+	cfg := map[string]any{"apiHost": "127.0.0.1", "apiPort": port, "connectionProfile": ccpPath,
+		"keychainId": "janus", "keychainRef": node, "identity": id}
+	cfgPath := filepath.Join(dir, "cacti-"+node+".json")
+	raw, _ = json.Marshal(cfg)
+	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("node", CactiServerScript(), cfgPath)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if logOut != nil {
+		cmd.Stderr = logOut
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	srv := &CactiServer{Node: node, URL: fmt.Sprintf("http://127.0.0.1:%d", port), cmd: cmd}
+	ready := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(out)
+		signaled := false
+		for sc.Scan() {
+			if logOut != nil {
+				fmt.Fprintln(logOut, sc.Text())
+			}
+			if !signaled && strings.Contains(sc.Text(), "janus-cacti pronto") {
+				close(ready)
+				signaled = true
+			}
+		}
+	}()
+	select {
+	case <-ready:
+		return srv, nil
+	case <-time.After(90 * time.Second):
+		srv.Stop()
+		return nil, fmt.Errorf("servidor Cacti de %s não ficou pronto", node)
+	}
 }

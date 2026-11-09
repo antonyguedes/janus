@@ -94,4 +94,8 @@ func TestAttestedSettlementWithGoAttestations(t *testing.T) {
 	if !settled {
 		t.Fatalf("evento PaymentSettled com S não encontrado: %+v", evs)
 	}
+	got, err := buyer.SettledAttestation(ctx, tt.SwapID)
+	if err != nil || got != a {
+		t.Fatalf("atestação on-chain: %+v err=%v", got, err)
+	}
 }

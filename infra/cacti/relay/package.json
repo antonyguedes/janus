@@ -1,0 +1,20 @@
+{
+  "name": "@janus/cacti-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor Hyperledger Cacti (v3.0.1) do Janus: conector Fabric (prova do lock comitado) e conector Besu (submissão do settle)",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "@hyperledger-cacti/cactus-cmd-api-server": "3.0.1",
+    "@hyperledger-cacti/cactus-common": "3.0.1",
+    "@hyperledger-cacti/cactus-core": "3.0.1",
+    "@hyperledger-cacti/cactus-core-api": "3.0.1",
+    "@hyperledger-cacti/cactus-plugin-keychain-memory": "3.0.1",
+    "@hyperledger-cacti/cactus-plugin-ledger-connector-besu": "3.0.1",
+    "@hyperledger-cacti/cactus-plugin-ledger-connector-fabric": "3.0.1"
+  }
+}

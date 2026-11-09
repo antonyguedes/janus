@@ -40,3 +40,7 @@ No `FabricProofVerifier`, a cadeia X.509 é validada **no cadastro** (feito por 
 
 - O SATP-Hermes fica documentado como **não usado** (ele transfere o ativo).
 - A disponibilidade do relay e dos atestadores passa a ser requisito de vivacidade, não de segurança: sem atestação não há pagamento, e o Drex volta depois de `T2`.
+
+## Atualização (2026-11-09)
+
+Os conectores do Cacti passaram a ser usados na coleta das atestações: cada atestador prova o lock pelo conector Fabric do Cacti da própria org. Ver o **ADR-0005**.

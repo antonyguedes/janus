@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 
 	"janus/node/internal/attest"
+	"janus/node/internal/cacti"
 )
 
 // Abordagem B2 (ADR-0003): atestação do lock do NFT no Fabric para o AttestedSettlement no Besu.
@@ -66,11 +67,22 @@ var DefaultLocks = NewLockRegistry()
 
 // --------------------------------------------------------------------- hooks do atestador
 
+// LedgerProver obtém a prova de uma transação no ledger comitado (conector Fabric do Cacti).
+type LedgerProver interface {
+	TxProof(ctx context.Context, txID string) (cacti.TxProof, error)
+}
+
 // AttestorHooks configuram o papel de atestador (Registradora e Banco).
 type AttestorHooks struct {
 	Signer    attest.Signer
 	Channel   string
 	Namespace string
+	// Ledger (opcional, mas obrigatório quando configurado): o conector Fabric do Cacti da
+	// própria org. O atestador só assina se a prova do ledger confirmar a transação de lock
+	// válida, do chaincode certo e endossada pelas orgs exigidas, e o número do bloco entra na
+	// atestação (ADR-0005).
+	Ledger            LedgerProver
+	RequiredEndorsers []string
 }
 
 var (
@@ -200,6 +212,17 @@ func buildAttestation(ctx view.Context, req AttestRequest) (*AttestResponse, err
 	if err != nil {
 		return nil, err
 	}
+	var block uint64
+	if h.Ledger != nil {
+		proof, err := h.Ledger.TxProof(ctx.Context(), rec.TxID)
+		if err != nil {
+			return nil, fmt.Errorf("attest: prova do ledger via Cacti: %w", err)
+		}
+		if err := proof.Satisfies(h.Namespace, h.RequiredEndorsers); err != nil {
+			return nil, err
+		}
+		block = proof.BlockNumber
+	}
 	a := attest.FabricLockAttestation{
 		SwapID:          req.SwapID,
 		Hashlock:        req.Hash,
@@ -209,6 +232,7 @@ func buildAttestation(ctx view.Context, req AttestRequest) (*AttestResponse, err
 		ChannelHash:     attest.HashString(h.Channel),
 		NamespaceHash:   attest.HashString(h.Namespace),
 		FabricTxID:      txid,
+		BlockNumber:     block,
 	}
 	sig, err := h.Signer.Sign(attest.Domain{ChainID: req.ChainID, Verifier: req.Verifier}, a)
 	if err != nil {

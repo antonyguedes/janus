@@ -29,6 +29,7 @@ import (
 	"janus/node/internal/api"
 	"janus/node/internal/attest"
 	"janus/node/internal/besu"
+	cacticonn "janus/node/internal/cacti"
 	"janus/node/internal/engine"
 	"janus/node/internal/hashlock"
 	"janus/node/internal/protocol/cacti"
@@ -51,9 +52,20 @@ type Config struct {
 	Faults       engine.Faults `json:"faults"`
 	// Attestors: nós FSC atestadores consultados pelo relay (Vendedora, abordagem B2).
 	Attestors []string `json:"attestors,omitempty"`
+	// Cacti (atestadores, B2): conector Fabric do Hyperledger Cacti da própria org, usado como
+	// fonte de prova do lock no ledger. Quando presente, é obrigatório (ADR-0005).
+	Cacti *CactiConfig `json:"cacti,omitempty"`
 	// Channel/Namespace do Token Chaincode (atestação). Padrão: os do deployment.
 	Channel   string `json:"channel,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
+}
+
+// CactiConfig aponta para o servidor Cacti (cactus-cmd-api-server) da org.
+type CactiConfig struct {
+	URL               string   `json:"url"`
+	KeychainID        string   `json:"keychainId"`
+	KeychainRef       string   `json:"keychainRef"`
+	RequiredEndorsers []string `json:"requiredEndorsers"` // ex.: ["RegistradoraMSP","BancoMSP"]
 }
 
 type APIConfig struct {
@@ -482,7 +494,13 @@ func (s *SDK) enableAttestor(cfg *Config, channel, namespace string) (*api.Attes
 	if err != nil {
 		return nil, err
 	}
-	token.SetAttestor(token.AttestorHooks{Signer: attest.Signer{MSPID: cfg.MSPID, Key: k}, Channel: channel, Namespace: namespace})
+	hooks := token.AttestorHooks{Signer: attest.Signer{MSPID: cfg.MSPID, Key: k}, Channel: channel, Namespace: namespace}
+	if c := cfg.Cacti; c != nil {
+		hooks.Ledger = &cacticonn.FabricConnector{BaseURL: c.URL, KeychainID: c.KeychainID, KeychainRef: c.KeychainRef, Channel: channel}
+		hooks.RequiredEndorsers = c.RequiredEndorsers
+		s.log.Info("atestador com prova de ledger via Cacti", "url", c.URL, "endossantes", c.RequiredEndorsers)
+	}
+	token.SetAttestor(hooks)
 	x, y, err := attest.PublicKeyXY(&k.PublicKey)
 	if err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package besu
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -72,4 +73,47 @@ func (c *Client) RegisterAttestors(ctx context.Context, threshold uint32, atts .
 		return fmt.Errorf("setThreshold: %w", err)
 	}
 	return nil
+}
+
+// SettledAttestation devolve a atestação usada no settle de um swap, decodificando o calldata da
+// transação que emitiu PaymentSettled (auditoria/E2E: confere o que a cadeia de fato aceitou).
+func (c *Client) SettledAttestation(ctx context.Context, swapID [32]byte) (attest.FabricLockAttestation, error) {
+	var out attest.FabricLockAttestation
+	evs, err := c.Events(ctx, 0, ^uint64(0)>>1)
+	if err != nil {
+		return out, err
+	}
+	for _, e := range evs {
+		if e.Contract != "settlement" || e.Kind != EvClaimed || e.SwapID != swapID {
+			continue
+		}
+		tx, _, err := c.eth.TransactionByHash(ctx, e.TxHash)
+		if err != nil {
+			return out, err
+		}
+		parsed, err := bindings.AttestedSettlementMetaData.ParseABI()
+		if err != nil {
+			return out, err
+		}
+		data := tx.Data()
+		if len(data) < 4 {
+			return out, fmt.Errorf("settle: calldata curto")
+		}
+		args, err := parsed.Methods["settle"].Inputs.Unpack(data[4:])
+		if err != nil {
+			return out, err
+		}
+		raw, err := json.Marshal(args[2])
+		if err != nil {
+			return out, err
+		}
+		var b bindings.FabricLockAttestation
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return out, err
+		}
+		return attest.FabricLockAttestation{SwapID: b.SwapId, Hashlock: b.Hashlock, AssetIDHash: b.AssetIdHash,
+			RecipientIDHash: b.RecipientIdHash, Deadline: b.Deadline, ChannelHash: b.ChannelHash,
+			NamespaceHash: b.NamespaceHash, FabricTxID: b.FabricTxId, BlockNumber: b.BlockNumber}, nil
+	}
+	return out, fmt.Errorf("settle do swap %x não encontrado", swapID[:8])
 }

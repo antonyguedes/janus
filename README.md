@@ -23,6 +23,7 @@ O plano completo está em [`docs/implementation_plan.md`](docs/implementation_pl
 | `node/internal/api`, `store`, `secrets` | REST + SSE, SQLite, S cifrado (AES-GCM) |
 | `node/topology` | topologia NWO e testes de integração com rede Fabric real |
 | `infra/besu` | QBFT com 4 validadores, gas zero, allowlist |
+| `infra/cacti/relay`, `node/internal/cacti` | servidor Hyperledger Cacti v3.0.1 (conector Fabric) por org atestadora e o cliente Go da prova de ledger (ADR-0005) |
 | `testdata/vectors` | vetores compartilhados Go ↔ Solidity |
 
 ## Pré-requisitos
@@ -54,7 +55,7 @@ make demo          # Fabric 3.1.5 + Panurus (NWO) + anvil + contratos + 3 nós J
 make besu-up && make demo-besu
 ```
 
-As APIs ficam em `:8080` (Registradora), `:8081` (Vendedora) e `:8082` (Banco). A governança B2 (atestadores 2-de-2) é cadastrada automaticamente. Em outro terminal, `npm run web` e depois abra `http://localhost:5173/?mode=live`. Ctrl-C derruba tudo.
+As APIs ficam em `:8080` (Registradora), `:8081` (Vendedora) e `:8082` (Banco), e os servidores Cacti em `:4100` (Registradora) e `:4101` (Banco). Os servidores Cacti exigem `npm install` na raiz. A governança B2 (atestadores 2-de-2) é cadastrada automaticamente. Em outro terminal, `npm run web` e depois abra `http://localhost:5173/?mode=live`. Ctrl-C derruba tudo.
 
 ## Simulador web
 

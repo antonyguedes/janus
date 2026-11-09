@@ -3,6 +3,7 @@ package it
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"janus/node/internal/api"
 	"janus/node/internal/besu"
+	"janus/node/internal/cacti"
 	"janus/node/internal/engine"
 	"janus/node/internal/swap"
 	jt "janus/node/internal/token"
@@ -146,14 +148,16 @@ type e2eOpts struct {
 	registro string
 	policy   string // dev | e2e
 	faults   map[string]engine.Faults
+	cacti    bool // atestadores provam o lock via conector Fabric do Cacti (ADR-0005)
 	setup    func(urls map[string]string, rpc string, dep *besu.Deployment)
 }
 
 type e2eEnv struct {
-	ii   *integration.Infrastructure
-	urls map[string]string
-	rpc  string
-	dep  *besu.Deployment
+	ii    *integration.Infrastructure
+	urls  map[string]string
+	rpc   string
+	dep   *besu.Deployment
+	cacti map[string]*CactiServer
 }
 
 func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
@@ -163,16 +167,55 @@ func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 	if o.policy == "" {
 		o.policy = "dev"
 	}
+	var cactiPorts map[string]int
+	if o.cacti {
+		if err := CactiAvailable(); err != nil {
+			t.Skip(err)
+		}
+		cactiPorts = map[string]int{}
+		for _, node := range []string{jt.AuditorNode, "banco"} {
+			p, err := FreePort()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cactiPorts[node] = p
+		}
+	}
 	rpc, depPath, dep := besuForE2E(t)
-	urls := writeJanusConfigs(t, rpc, depPath, o.policy, o.faults)
-	ii := startNetwork(t, Options{})
+	dir := t.TempDir()
+	t.Setenv("JANUS_CONFIG_DIR", dir)
+	urls, err := WriteJanusConfigs(NodeConfig{Dir: dir, RPC: rpc, Deployment: depPath, Policy: o.policy,
+		Faults: o.faults, Cacti: cactiPorts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := startNetworkN(t, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &e2eEnv{ii: n.II, urls: urls, rpc: rpc, dep: dep, cacti: map[string]*CactiServer{}}
+	if o.cacti {
+		ccp, ids, err := n.FabricConnectionProfile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		msp := map[string]string{jt.AuditorNode: "RegistradoraMSP", "banco": "BancoMSP"}
+		for node, port := range cactiPorts {
+			srv, err := StartCacti(t.TempDir(), node, port, ccp, ids[msp[node]], nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(srv.Stop)
+			env.cacti[node] = srv
+		}
+	}
 	for _, u := range urls {
 		waitAPI(t, u)
 	}
 	if o.setup != nil {
 		o.setup(urls, rpc, dep)
 	}
-	return &e2eEnv{ii: ii, urls: urls, rpc: rpc, dep: dep}
+	return env
 }
 
 // issueAndPropose: a Registradora emite o recebível e a Vendedora propõe o swap ao Banco.
@@ -224,7 +267,7 @@ func nftWith(t *testing.T, env *e2eEnv, owner, other, linearID string) {
 }
 
 // e2e executa o caminho feliz completo pelas APIs e confere as duas cadeias.
-func e2e(t *testing.T, o e2eOpts) {
+func e2e(t *testing.T, o e2eOpts) (*e2eEnv, api.SwapDTO) {
 	env := bootE2E(t, o)
 	id, proposed := issueAndPropose(t, env, o)
 	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
@@ -233,6 +276,7 @@ func e2e(t *testing.T, o e2eOpts) {
 		t.Fatalf("saldo Drex da Vendedora: %d", got)
 	}
 	nftWith(t, env, "banco", "vendedora", id)
+	return env, proposed
 }
 
 // TestE2EHTLC: Abordagem A ponta a ponta com os nós Janus reais (SDK do Janus dentro dos nós
@@ -244,7 +288,7 @@ func TestE2EHTLC(t *testing.T) { e2e(t, e2eOpts{proto: swap.ProtocolHTLC, regist
 // as atestações da Registradora (auditoria) e do Banco (vault) por sessões FSC, e o
 // AttestedSettlement verifica a política 2-de-2 com P-256 nativo antes de liberar o Drex.
 func TestE2EAttested(t *testing.T) {
-	e2e(t, e2eOpts{proto: swap.ProtocolCacti, registro: "REG-E2E-B", setup: func(urls map[string]string, rpc string, dep *besu.Deployment) {
+	env, proposed := e2e(t, e2eOpts{proto: swap.ProtocolCacti, registro: "REG-E2E-B", cacti: true, setup: func(urls map[string]string, rpc string, dep *besu.Deployment) {
 		admin, _ := crypto.HexToECDSA(keyAdmin)
 		c, err := besu.Dial(context.Background(), rpc, admin, dep)
 		if err != nil {
@@ -262,6 +306,34 @@ func TestE2EAttested(t *testing.T) {
 			t.Fatal(err)
 		}
 	}})
+
+	// A atestação aceita on-chain traz o bloco que o conector Fabric do Cacti reporta para a
+	// transação de lock: a prova veio do ledger comitado, não da memória dos nós.
+	k, _ := crypto.HexToECDSA(keyBuyer)
+	bc, err := besu.Dial(context.Background(), env.rpc, k, env.dep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bc.Close()
+	id := hex32(t, "0x"+proposed.SwapID)
+	att, err := bc.SettledAttestation(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.BlockNumber == 0 {
+		t.Fatal("atestação sem número de bloco: a prova via Cacti não foi usada")
+	}
+	srv := env.cacti["banco"]
+	conn := &cacti.FabricConnector{BaseURL: srv.URL, KeychainID: "janus", KeychainRef: "banco", Channel: "testchannel"}
+	proof, err := conn.TxProof(context.Background(), hex.EncodeToString(att.FabricTxID[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.BlockNumber != att.BlockNumber || proof.Satisfies("tns", RequiredEndorsers) != nil {
+		t.Fatalf("prova Cacti %+v != atestação on-chain (bloco %d)", proof, att.BlockNumber)
+	}
+	t.Logf("lock %x comitado no bloco %d, endossado por %v; atestação 2-de-2 aceita on-chain",
+		att.FabricTxID[:6], proof.BlockNumber, proof.Endorsers)
 }
 
 // TestE2ESellerNoReveal (cenário 3, abordagem A): a Vendedora nunca revela S (falha injetada).

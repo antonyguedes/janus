@@ -38,6 +38,7 @@ func main() {
 	policy := flag.String("policy", "dev", "política de tempo: dev (T2=3min, T1=6min) | e2e (T2=75s, T1=170s)")
 	dir := flag.String("dir", ".janus/net", "diretório de estado (configs, SQLite, segredos)")
 	origin := flag.String("origin", "http://localhost:5173", "origem do simulador web (CORS)")
+	useCacti := flag.Bool("cacti", true, "atestadores provam o lock via conector Fabric do Hyperledger Cacti (ADR-0005)")
 	flag.Parse()
 
 	if os.Getenv("FAB_BINS") == "" {
@@ -65,8 +66,19 @@ func main() {
 	log.Printf("besu: %s (chainId %d) | HTLCPayment %s | AttestedSettlement %s", rpc, dep.ChainID, dep.HTLCPayment, dep.AttestedSettlement)
 
 	// 2) Configuração dos nós Janus (APIs nas portas padrão do simulador)
+	cactiPorts := map[string]int{jt.AuditorNode: 4100, "banco": 4101}
+	if *useCacti {
+		if err := it.CactiAvailable(); err != nil {
+			log.Printf("Cacti desabilitado: %v", err)
+			*useCacti = false
+		}
+	}
+	if !*useCacti {
+		cactiPorts = nil
+	}
 	urls, err := it.WriteJanusConfigs(it.NodeConfig{Dir: abs, RPC: rpc, Deployment: depPath, Policy: *policy,
-		AllowOrigin: *origin, Ports: map[string]int{jt.AuditorNode: 8080, "vendedora": 8081, "banco": 8082}})
+		AllowOrigin: *origin, Ports: map[string]int{jt.AuditorNode: 8080, "vendedora": 8081, "banco": 8082},
+		Cacti: cactiPorts})
 	must(err)
 	must(os.Setenv("JANUS_CONFIG_DIR", abs))
 
@@ -78,6 +90,22 @@ func main() {
 	for node, u := range urls {
 		must(waitHealth(u, 2*time.Minute))
 		log.Printf("nó %-12s %s", node, u)
+	}
+	// connection profile + identidades das orgs para os conectores do Cacti
+	ccp, ids, err := n.FabricConnectionProfile()
+	must(err)
+	cdir := filepath.Join(abs, "cacti")
+	must(os.MkdirAll(cdir, 0o700))
+	must(writeJSON(filepath.Join(cdir, "ccp.json"), ccp))
+	must(writeJSON(filepath.Join(cdir, "identities.json"), ids))
+	msp := map[string]string{jt.AuditorNode: "RegistradoraMSP", "banco": "BancoMSP"}
+	for node, port := range cactiPorts {
+		logf, err := os.Create(filepath.Join(cdir, node+".log"))
+		must(err)
+		srv, err := it.StartCacti(cdir, node, port, ccp, ids[msp[node]], logf)
+		must(err)
+		defer srv.Stop()
+		log.Printf("cacti %-12s %s (conector Fabric, %s)", node, srv.URL, msp[node])
 	}
 
 	// 4) Governança B2: cadastra as chaves de atestador (Registradora + Banco), política 2-de-2
@@ -103,15 +131,31 @@ Janus no ar.
   Vendedora     %s
   Banco         %s
   Besu          %s
+  Cacti         %s
 
 Simulador web: npm run web  →  http://localhost:5173/?mode=live
 Ctrl-C para derrubar tudo.
-`, urls[jt.AuditorNode], urls["vendedora"], urls["banco"], rpc)
+`, urls[jt.AuditorNode], urls["vendedora"], urls["banco"], rpc, cactiSummary(cactiPorts))
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	log.Print("derrubando a rede...")
+}
+
+func cactiSummary(ports map[string]int) string {
+	if len(ports) == 0 {
+		return "desabilitado (atestação sem prova de ledger via Cacti)"
+	}
+	return fmt.Sprintf("Registradora :%d, Banco :%d (conector Fabric v3.0.1)", ports[jt.AuditorNode], ports["banco"])
+}
+
+func writeJSON(path string, v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
 }
 
 func must(err error) {

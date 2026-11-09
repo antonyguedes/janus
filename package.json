@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Janus — Liquidação Atômica Interbancária Cross-Chain (DvP): Hyperledger Fabric + Panurus ↔ Hyperledger Besu (Drex), via HTLC e Hyperledger Cacti",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "infra/cacti/relay"
   ],
   "engines": {
     "node": ">=24"

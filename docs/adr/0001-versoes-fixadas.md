@@ -16,7 +16,7 @@
 | Foundry | **≥ 1.8.1** (local). A última é a v1.9.0 | `forge --version`. Recomendado `foundryup` para a 1.9.0 |
 | OpenZeppelin Contracts | **v5.7.0** | GitHub releases |
 | go-ethereum (cliente + abigen) | **v1.17.10** | proxy.golang.org |
-| Hyperledger Cacti | **v3.0.1** | GitHub releases (2026-08-21) |
+| Hyperledger Cacti | **v3.0.1**: pacotes JS `@hyperledger-cacti/*` 3.0.1 (`cactus-cmd-api-server`, `cactus-plugin-ledger-connector-fabric`, `cactus-plugin-keychain-memory`) | GitHub releases (2026-08-21) e npm. Atenção: em `@hyperledger/*` a última versão é a 2.0.0 (2024) |
 | Node.js (simulador) | **≥ 24** (local v24.19.0) | |
 
 ## Consequências
