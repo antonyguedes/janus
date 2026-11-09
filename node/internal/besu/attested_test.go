@@ -81,7 +81,8 @@ func TestAttestedSettlementWithGoAttestations(t *testing.T) {
 	if v.State != swap.BesuClaimed || v.Preimage == nil || *v.Preimage != s {
 		t.Fatalf("view: %+v", v)
 	}
-	evs, err := buyer.Events(ctx, 0, ^uint64(0)>>1)
+	head, _ := buyer.Eth().BlockNumber(ctx)
+	evs, err := buyer.Events(ctx, 0, head)
 	if err != nil {
 		t.Fatal(err)
 	}

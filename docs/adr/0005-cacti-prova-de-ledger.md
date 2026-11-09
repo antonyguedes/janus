@@ -26,7 +26,7 @@
 
 ## Fora deste passo
 
-- **Submissão do `settle` pelo conector Besu do Cacti** (`invoke-contract`): continua com o cliente Go da Vendedora. O conector Besu 3.0.1 usa `web3` 1.6.1 e fica como próximo passo, a validar contra o genesis Osaka.
+- **Submissão do `settle` pelo conector Besu do Cacti:** feita depois, no **ADR-0006**.
 - **Keychain em memória:** só para DEV. Em produção, keychain com Vault/KMS e autorização no ApiServer (`authorizationProtocol`), hoje `NONE` e escutando apenas em `127.0.0.1`.
 
 ## Consequências

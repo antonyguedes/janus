@@ -37,6 +37,8 @@ const (
 	KeyAdmin  = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 	KeySeller = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 	KeyBuyer  = "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+	// KeyRelay: conta de relay que submete o settle via conector Besu do Cacti (allowlist do Besu).
+	KeyRelay = "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 )
 
 // Network é uma rede Janus completa: Fabric 3.x + Panurus (NWO) com os três nós FSC rodando a
@@ -161,6 +163,9 @@ type NodeConfig struct {
 	// Cacti: porta do servidor Cacti de cada nó atestador (Registradora, Banco). Quando
 	// presente, o atestador exige a prova do ledger via conector Fabric do Cacti (ADR-0005).
 	Cacti map[string]int
+	// Relay: porta do servidor Cacti com o conector Besu (relay da Vendedora). Quando > 0, o
+	// settle B2 da Vendedora sai pelo conector Besu do Cacti com a conta de relay (ADR-0006).
+	Relay int
 }
 
 // RequiredEndorsers é a política de endosso do Token Chaincode (PolicyJanus) vista pelo atestador.
@@ -184,6 +189,10 @@ func WriteJanusConfigs(c NodeConfig) (map[string]string, error) {
 		jc.DataDir = filepath.Join(c.Dir, node+"-data")
 		jc.Policy = c.Policy
 		jc.Faults = c.Faults[node]
+		if c.Relay > 0 && jc.Role == "vendedora" {
+			jc.Relay = &janus.RelayConfig{URL: fmt.Sprintf("http://127.0.0.1:%d", c.Relay), KeychainID: "janus",
+				KeychainRef: "relay", Account: addrOf(KeyRelay).Hex()}
+		}
 		if p, ok := c.Cacti[node]; ok {
 			jc.Cacti = &janus.CactiConfig{URL: fmt.Sprintf("http://127.0.0.1:%d", p), KeychainID: "janus",
 				KeychainRef: node, RequiredEndorsers: RequiredEndorsers}
@@ -295,17 +304,33 @@ func CactiAvailable() error {
 	return nil
 }
 
-// StartCacti sobe o servidor Cacti de um nó atestador com a identidade da org e espera ficar pronto.
+// StartCacti sobe o servidor Cacti de um nó atestador (conector Fabric) com a identidade da org.
 func StartCacti(dir, node string, port int, ccp map[string]any, id CactiIdentity, logOut io.Writer) (*CactiServer, error) {
 	ccpPath := filepath.Join(dir, "ccp.json")
 	raw, _ := json.Marshal(ccp)
 	if err := os.WriteFile(ccpPath, raw, 0o600); err != nil {
 		return nil, err
 	}
-	cfg := map[string]any{"apiHost": "127.0.0.1", "apiPort": port, "connectionProfile": ccpPath,
-		"keychainId": "janus", "keychainRef": node, "identity": id}
-	cfgPath := filepath.Join(dir, "cacti-"+node+".json")
-	raw, _ = json.Marshal(cfg)
+	return StartCactiConfig(dir, node, port, map[string]any{
+		"fabric": map[string]any{"connectionProfile": ccpPath, "keychainRef": node, "identity": id},
+	}, logOut)
+}
+
+// StartCactiRelay sobe o relay da Vendedora (conector Besu) com a chave da conta de relay.
+func StartCactiRelay(dir string, port int, rpcHTTP, rpcWS, relayKey string, logOut io.Writer) (*CactiServer, error) {
+	return StartCactiConfig(dir, "relay", port, map[string]any{
+		"besu": map[string]any{"rpcApiHttpHost": rpcHTTP, "rpcApiWsHost": rpcWS, "keys": map[string]string{"relay": relayKey}},
+	}, logOut)
+}
+
+// StartCactiConfig grava a configuração (seções "fabric" e/ou "besu") e espera o servidor ficar pronto.
+func StartCactiConfig(dir, name string, port int, sections map[string]any, logOut io.Writer) (*CactiServer, error) {
+	cfg := map[string]any{"apiHost": "127.0.0.1", "apiPort": port, "keychainId": "janus"}
+	for k, v := range sections {
+		cfg[k] = v
+	}
+	cfgPath := filepath.Join(dir, "cacti-"+name+".json")
+	raw, _ := json.Marshal(cfg)
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
 		return nil, err
 	}
@@ -320,7 +345,7 @@ func StartCacti(dir, node string, port int, ccp map[string]any, id CactiIdentity
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	srv := &CactiServer{Node: node, URL: fmt.Sprintf("http://127.0.0.1:%d", port), cmd: cmd}
+	srv := &CactiServer{Node: name, URL: fmt.Sprintf("http://127.0.0.1:%d", port), cmd: cmd}
 	ready := make(chan struct{})
 	go func() {
 		sc := bufio.NewScanner(out)
@@ -340,6 +365,6 @@ func StartCacti(dir, node string, port int, ccp map[string]any, id CactiIdentity
 		return srv, nil
 	case <-time.After(90 * time.Second):
 		srv.Stop()
-		return nil, fmt.Errorf("servidor Cacti de %s não ficou pronto", node)
+		return nil, fmt.Errorf("servidor Cacti %s não ficou pronto", name)
 	}
 }

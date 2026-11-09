@@ -16,9 +16,15 @@ Um processo `janus-node` (nó FSC + Panurus + SDK do Janus) por instituição. E
   "policy": "prod",
   "dataDir": "/var/lib/janus",
   "api": { "listen": "127.0.0.1:8081", "allowOrigin": "https://simulador.interno" },
-  "besu": { "rpc": "https://besu.interno:8545", "keyHex": "<KMS em produção>", "deployment": "/etc/janus/1337.json" }
+  "besu": { "rpc": "https://besu.interno:8545", "keyHex": "<KMS em produção>", "deployment": "/etc/janus/1337.json" },
+  "cacti": { "url": "http://127.0.0.1:4100", "keychainId": "janus", "keychainRef": "registradora",
+             "requiredEndorsers": ["RegistradoraMSP", "BancoMSP"] },
+  "relay": { "url": "http://127.0.0.1:4102", "keychainId": "janus", "keychainRef": "relay",
+             "account": "0x15d3…", "fallbackDirect": false }
 }
 ```
+
+`cacti` vale para os atestadores (Registradora e Banco, ADR-0005) e `relay` para a Vendedora (ADR-0006). Os servidores Cacti rodam com `node infra/cacti/relay/src/server.mjs <config.json>`.
 
 `dataDir` guarda `janus.db` (SQLite), `secrets/` (S cifrado), `master.key`, `attestor.key` e `besu.checkpoint`. **Faça backup de `dataDir` e `master.key` separadamente.**
 
@@ -47,6 +53,8 @@ Um processo `janus-node` (nó FSC + Panurus + SDK do Janus) por instituição. E
 | `alert: pago, mas o Banco não fez o claim até T1` (na Vendedora) | Banco ausente | o nó honesto **não** faz reclaim. Coordene a transferência manual do NFT ao Banco |
 | Swap parado em `both_locked` (B2) | relay ou atestador fora do ar, ou chave de atestador não cadastrada | confira `attestors` no `janus.json`, `GET /api/v1/info` dos atestadores e o cadastro no `FabricProofVerifier`. Depois de T2, as duas pernas revertem sozinhas |
 | `audit: early reclaim refused` | reclaim antes de `deadline + 30 s` | esperado: aguarde |
+| `attest: prova do ledger via Cacti: ...` | servidor Cacti da org atestadora fora do ar, ou transação de lock inválida ou sem os endossos exigidos | suba o servidor Cacti da org. Atestação recusada é falha fechada: sem pagamento, reversão depois de T2 |
+| `settle via relay Cacti: ...` | relay da Vendedora fora do ar | suba o relay, ou habilite `relay.fallbackDirect`. O motor tenta de novo a cada ciclo |
 | `lock accept: no signed terms for this hashlock` | lock sem negociação prévia | todo lock passa por `POST /api/v1/swaps` |
 | Instalação do chaincode falha com `invalid UTF-8` | build no `ccenv` com Go antigo | use o external builder (`node/ci/external-builders/golang`), ver o ADR-0001 |
 

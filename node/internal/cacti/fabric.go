@@ -62,16 +62,21 @@ func (c *FabricConnector) client() *http.Client {
 }
 
 func (c *FabricConnector) post(ctx context.Context, op string, body, out any) error {
+	return postJSON(ctx, c.client(), c.BaseURL+fabricPluginPath+"/"+op, op, body, out)
+}
+
+// postJSON faz o POST de um endpoint de plugin do Cacti e decodifica a resposta.
+func postJSON(ctx context.Context, hc *http.Client, url, op string, body, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+fabricPluginPath+"/"+op, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err := c.client().Do(req)
+	res, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("cacti %s: %w", op, err)
 	}
@@ -81,7 +86,7 @@ func (c *FabricConnector) post(ctx context.Context, op string, body, out any) er
 		return err
 	}
 	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("cacti %s: HTTP %d: %.300s", op, res.StatusCode, data)
+		return fmt.Errorf("cacti %s: HTTP %d: %.400s", op, res.StatusCode, data)
 	}
 	return json.Unmarshal(data, out)
 }

@@ -55,6 +55,8 @@ type Config struct {
 	// Cacti (atestadores, B2): conector Fabric do Hyperledger Cacti da própria org, usado como
 	// fonte de prova do lock no ledger. Quando presente, é obrigatório (ADR-0005).
 	Cacti *CactiConfig `json:"cacti,omitempty"`
+	// Relay (Vendedora, B2): conector Besu do Hyperledger Cacti que submete o settle (ADR-0006).
+	Relay *RelayConfig `json:"relay,omitempty"`
 	// Channel/Namespace do Token Chaincode (atestação). Padrão: os do deployment.
 	Channel   string `json:"channel,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
@@ -66,6 +68,15 @@ type CactiConfig struct {
 	KeychainID        string   `json:"keychainId"`
 	KeychainRef       string   `json:"keychainRef"`
 	RequiredEndorsers []string `json:"requiredEndorsers"` // ex.: ["RegistradoraMSP","BancoMSP"]
+}
+
+// RelayConfig aponta para o servidor Cacti com o conector Besu e a conta de relay.
+type RelayConfig struct {
+	URL            string `json:"url"`
+	KeychainID     string `json:"keychainId"`
+	KeychainRef    string `json:"keychainRef"` // entrada do keychain com a chave da conta de relay
+	Account        string `json:"account"`     // endereço da conta de relay
+	FallbackDirect bool   `json:"fallbackDirect,omitempty"`
 }
 
 type APIConfig struct {
@@ -310,7 +321,13 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 
 	fab := &token.FSCPort{Views: views, Counterparty: cfg.Counterparty}
 	proto := &htlc.Protocol{Fabric: fab, Besu: besuAdapter{bc}, Secrets: sec, Policy: policy}
-	protoB := &cacti.Protocol{Fabric: fab, Payment: settlementAdapter{bc}, Secrets: sec, Policy: policy,
+	payB := settlementAdapter{c: bc, log: s.log}
+	if r := cfg.Relay; r != nil {
+		payB.relay = &cacticonn.BesuConnector{BaseURL: r.URL, KeychainID: r.KeychainID, KeychainRef: r.KeychainRef, Account: r.Account}
+		payB.fallback = r.FallbackDirect
+		s.log.Info("settle B2 via relay Cacti (conector Besu)", "url", r.URL, "conta", r.Account, "fallback", r.FallbackDirect)
+	}
+	protoB := &cacti.Protocol{Fabric: fab, Payment: payB, Secrets: sec, Policy: policy,
 		Collector: &fscCollector{views: views, attestors: cfg.Attestors}}
 	protocols := map[swap.Protocol]swap.SettlementProtocol{swap.ProtocolHTLC: proto, swap.ProtocolCacti: protoB}
 	enabled := []swap.Protocol{swap.ProtocolHTLC, swap.ProtocolCacti}

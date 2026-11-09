@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
 	"janus/node/internal/attest"
@@ -79,41 +80,90 @@ func (c *Client) RegisterAttestors(ctx context.Context, threshold uint32, atts .
 // transação que emitiu PaymentSettled (auditoria/E2E: confere o que a cadeia de fato aceitou).
 func (c *Client) SettledAttestation(ctx context.Context, swapID [32]byte) (attest.FabricLockAttestation, error) {
 	var out attest.FabricLockAttestation
-	evs, err := c.Events(ctx, 0, ^uint64(0)>>1)
+	e, err := c.settleEvent(ctx, swapID)
 	if err != nil {
 		return out, err
 	}
-	for _, e := range evs {
-		if e.Contract != "settlement" || e.Kind != EvClaimed || e.SwapID != swapID {
-			continue
-		}
-		tx, _, err := c.eth.TransactionByHash(ctx, e.TxHash)
-		if err != nil {
-			return out, err
-		}
-		parsed, err := bindings.AttestedSettlementMetaData.ParseABI()
-		if err != nil {
-			return out, err
-		}
-		data := tx.Data()
-		if len(data) < 4 {
-			return out, fmt.Errorf("settle: calldata curto")
-		}
-		args, err := parsed.Methods["settle"].Inputs.Unpack(data[4:])
-		if err != nil {
-			return out, err
-		}
-		raw, err := json.Marshal(args[2])
-		if err != nil {
-			return out, err
-		}
-		var b bindings.FabricLockAttestation
-		if err := json.Unmarshal(raw, &b); err != nil {
-			return out, err
-		}
-		return attest.FabricLockAttestation{SwapID: b.SwapId, Hashlock: b.Hashlock, AssetIDHash: b.AssetIdHash,
-			RecipientIDHash: b.RecipientIdHash, Deadline: b.Deadline, ChannelHash: b.ChannelHash,
-			NamespaceHash: b.NamespaceHash, FabricTxID: b.FabricTxId, BlockNumber: b.BlockNumber}, nil
+	return c.decodeSettle(ctx, e)
+}
+
+// SettleSender devolve quem submeteu o settle do swap (ex.: a conta de relay do Cacti).
+func (c *Client) SettleSender(ctx context.Context, swapID [32]byte) (common.Address, error) {
+	e, err := c.settleEvent(ctx, swapID)
+	if err != nil {
+		return common.Address{}, err
 	}
-	return out, fmt.Errorf("settle do swap %x não encontrado", swapID[:8])
+	tx, _, err := c.eth.TransactionByHash(ctx, e.TxHash)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return c.Sender(tx)
+}
+
+// settleEvent encontra o PaymentSettled do swap.
+func (c *Client) settleEvent(ctx context.Context, swapID [32]byte) (Event, error) {
+	// O Besu rejeita toBlock além do topo e limita o intervalo de eth_getLogs (5000 por
+	// padrão): busca em janelas de 2000 blocos, do topo para trás.
+	head, err := c.eth.BlockNumber(ctx)
+	if err != nil {
+		return Event{}, err
+	}
+	const window = 2000
+	var evs []Event
+	for to := head; ; {
+		from := uint64(0)
+		if to >= window {
+			from = to - window + 1
+		}
+		chunk, err := c.Events(ctx, from, to)
+		if err != nil {
+			return Event{}, err
+		}
+		found := false
+		for _, e := range chunk {
+			if e.Contract == "settlement" && e.Kind == EvClaimed && e.SwapID == swapID {
+				evs, found = []Event{e}, true
+			}
+		}
+		if found || from == 0 {
+			break
+		}
+		to = from - 1
+	}
+	if len(evs) == 0 {
+		return Event{}, fmt.Errorf("settle do swap %x não encontrado", swapID[:8])
+	}
+	return evs[0], nil
+}
+
+// decodeSettle decodifica a atestação do calldata da transação de settle.
+func (c *Client) decodeSettle(ctx context.Context, e Event) (attest.FabricLockAttestation, error) {
+	var out attest.FabricLockAttestation
+	tx, _, err := c.eth.TransactionByHash(ctx, e.TxHash)
+	if err != nil {
+		return out, err
+	}
+	parsed, err := bindings.AttestedSettlementMetaData.ParseABI()
+	if err != nil {
+		return out, err
+	}
+	data := tx.Data()
+	if len(data) < 4 {
+		return out, fmt.Errorf("settle: calldata curto")
+	}
+	args, err := parsed.Methods["settle"].Inputs.Unpack(data[4:])
+	if err != nil {
+		return out, err
+	}
+	raw, err := json.Marshal(args[2])
+	if err != nil {
+		return out, err
+	}
+	var b bindings.FabricLockAttestation
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return out, err
+	}
+	return attest.FabricLockAttestation{SwapID: b.SwapId, Hashlock: b.Hashlock, AssetIDHash: b.AssetIdHash,
+		RecipientIDHash: b.RecipientIdHash, Deadline: b.Deadline, ChannelHash: b.ChannelHash,
+		NamespaceHash: b.NamespaceHash, FabricTxID: b.FabricTxId, BlockNumber: b.BlockNumber}, nil
 }

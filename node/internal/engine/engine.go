@@ -160,6 +160,9 @@ func (e *Engine) Run(ctx context.Context, t *swap.SwapTerms) (swap.Decision, err
 					step.Meta = map[string]string{"fault": "ação suprimida por falha injetada"}
 				} else if err := proto.Execute(ctx, e.cfg.Role, t, d); err != nil {
 					step.Error = err.Error()
+					// também no log: a operação acompanha falhas sem precisar do SSE (runbook)
+					e.cfg.Log.Warn("ação falhou; nova tentativa no próximo ciclo",
+						"swap", fmt.Sprintf("%x", t.SwapID[:8]), "acao", d.Kind, "err", err)
 				} else {
 					step.Executed = true
 					if e.cfg.Faults.CrashAfterReveal && (d.Kind == swap.ActClaimPayment || d.Kind == swap.ActSettlePayment || d.Kind == swap.ActClaimAsset) {

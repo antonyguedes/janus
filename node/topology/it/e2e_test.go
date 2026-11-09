@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +169,8 @@ func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 		o.policy = "dev"
 	}
 	var cactiPorts map[string]int
+	relayPort := 0
+	var err error
 	if o.cacti {
 		if err := CactiAvailable(); err != nil {
 			t.Skip(err)
@@ -180,12 +183,15 @@ func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 			}
 			cactiPorts[node] = p
 		}
+		if relayPort, err = FreePort(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	rpc, depPath, dep := besuForE2E(t)
 	dir := t.TempDir()
 	t.Setenv("JANUS_CONFIG_DIR", dir)
 	urls, err := WriteJanusConfigs(NodeConfig{Dir: dir, RPC: rpc, Deployment: depPath, Policy: o.policy,
-		Faults: o.faults, Cacti: cactiPorts})
+		Faults: o.faults, Cacti: cactiPorts, Relay: relayPort})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +214,12 @@ func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 			t.Cleanup(srv.Stop)
 			env.cacti[node] = srv
 		}
+		relay, err := StartCactiRelay(t.TempDir(), relayPort, rpc, strings.Replace(rpc, "http://", "ws://", 1), KeyRelay, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(relay.Stop)
+		env.cacti["relay"] = relay
 	}
 	for _, u := range urls {
 		waitAPI(t, u)
@@ -332,8 +344,13 @@ func TestE2EAttested(t *testing.T) {
 	if proof.BlockNumber != att.BlockNumber || proof.Satisfies("tns", RequiredEndorsers) != nil {
 		t.Fatalf("prova Cacti %+v != atestação on-chain (bloco %d)", proof, att.BlockNumber)
 	}
-	t.Logf("lock %x comitado no bloco %d, endossado por %v; atestação 2-de-2 aceita on-chain",
-		att.FabricTxID[:6], proof.BlockNumber, proof.Endorsers)
+	// O settle foi submetido pela conta de relay, via conector Besu do Cacti (ADR-0006).
+	from, err := bc.SettleSender(context.Background(), id)
+	if err != nil || from != addrOf(KeyRelay) {
+		t.Fatalf("settle enviado por %s, esperado o relay %s (%v)", from, addrOf(KeyRelay), err)
+	}
+	t.Logf("lock %x comitado no bloco %d, endossado por %v; settle 2-de-2 submetido pelo relay %s via Cacti",
+		att.FabricTxID[:6], proof.BlockNumber, proof.Endorsers, from.Hex()[:10])
 }
 
 // TestE2ESellerNoReveal (cenário 3, abordagem A): a Vendedora nunca revela S (falha injetada).

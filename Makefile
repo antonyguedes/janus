@@ -77,7 +77,7 @@ demo: ## sobe tudo (Fabric NWO + anvil + contratos + 3 nós Janus, APIs em :8080
 	cd node/topology && FAB_BINS=$(FAB_BINS) go run ./cmd/janus-net -dir $(CURDIR)/.janus/net
 
 demo-besu: ## como demo, mas usando o Besu QBFT de `make besu-up`
-	cd node/topology && FAB_BINS=$(FAB_BINS) go run ./cmd/janus-net -dir $(CURDIR)/.janus/net -besu http://localhost:8545
+	cd node/topology && FAB_BINS=$(FAB_BINS) go run ./cmd/janus-net -dir $(CURDIR)/.janus/net -besu http://localhost:8545 -besu-ws ws://localhost:8546
 
 web: ## simulador web (compila o núcleo para WASM e sobe o Vite)
 	npm run web

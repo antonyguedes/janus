@@ -2,6 +2,12 @@ package janus
 
 import (
 	"context"
+	"log/slog"
+	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +15,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"janus/node/internal/besu/bindings"
+	cacticonn "janus/node/internal/cacti"
 	"os"
 
 	fscview "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
@@ -20,7 +28,15 @@ import (
 )
 
 // settlementAdapter implementa cacti.SettlementPort sobre besu.Client.
-type settlementAdapter struct{ c *besu.Client }
+// settlementAdapter implementa cacti.SettlementPort sobre besu.Client. Com relay configurado, o
+// settle é submetido pelo conector Besu do Hyperledger Cacti (ADR-0006) e o nó confirma a inclusão
+// e o status pela própria cadeia.
+type settlementAdapter struct {
+	c        *besu.Client
+	relay    *cacticonn.BesuConnector
+	fallback bool // submete direto se o relay falhar (vivacidade); padrão: não
+	log      *slog.Logger
+}
 
 func (a settlementAdapter) View(ctx context.Context, t *swap.SwapTerms) (swap.BesuView, error) {
 	return a.c.SettlementView(ctx, t.SwapID)
@@ -30,8 +46,35 @@ func (a settlementAdapter) Deposit(ctx context.Context, t *swap.SwapTerms, asset
 	return err
 }
 func (a settlementAdapter) Settle(ctx context.Context, id, s [32]byte, att attest.FabricLockAttestation, sigs []attest.OrgSignature) error {
-	_, err := a.c.SettleAttested(ctx, id, s, att, sigs)
+	if a.relay == nil {
+		_, err := a.c.SettleAttested(ctx, id, s, att, sigs)
+		return err
+	}
+	err := a.settleViaRelay(ctx, id, s, att, sigs)
+	if err != nil && a.fallback {
+		a.log.Warn("relay Cacti falhou; submetendo o settle diretamente (fallback)", "err", err)
+		_, err = a.c.SettleAttested(ctx, id, s, att, sigs)
+	}
 	return err
+}
+
+func (a settlementAdapter) settleViaRelay(ctx context.Context, id, s [32]byte, att attest.FabricLockAttestation, sigs []attest.OrgSignature) error {
+	dep := a.c.Deployment()
+	res, err := a.relay.Send(ctx, bindings.AttestedSettlementMetaData.ABI, dep.AttestedSettlement.Hex(), "settle",
+		cacticonn.SettleParams(id, s, att, sigs))
+	if err != nil {
+		return fmt.Errorf("settle via relay Cacti: %w", err)
+	}
+	// O nó não confia só na resposta do relay: confirma inclusão e status na cadeia.
+	rc, err := a.c.WaitReceipt(ctx, common.HexToHash(res.TxHash), 60*time.Second)
+	if err != nil {
+		return err
+	}
+	if rc.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("settle via relay Cacti revertido: %s", res.TxHash)
+	}
+	a.log.Info("settle submetido pelo relay Cacti", "tx", res.TxHash, "relay", a.relay.Account)
+	return nil
 }
 func (a settlementAdapter) Refund(ctx context.Context, id [32]byte) error {
 	_, err := a.c.RefundDeposit(ctx, id)

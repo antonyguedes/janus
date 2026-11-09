@@ -235,3 +235,20 @@ func (c *Client) View(ctx context.Context, t *swap.SwapTerms) (swap.BesuView, er
 	}
 	return c.HTLCView(ctx, t.SwapID)
 }
+
+// WaitReceipt espera a inclusão de uma transação enviada por outro componente (ex.: o relay do
+// Cacti, que responde com o ack do pool) e devolve o recibo.
+func (c *Client) WaitReceipt(ctx context.Context, h common.Hash, timeout time.Duration) (*types.Receipt, error) {
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	r, err := bind.WaitMined(wctx, c.eth, h)
+	if err != nil {
+		return nil, fmt.Errorf("besu: wait %s: %w", h, err)
+	}
+	return r, nil
+}
+
+// Sender recupera o remetente de uma transação (assinatura EIP-155/legacy ou tipada).
+func (c *Client) Sender(tx *types.Transaction) (common.Address, error) {
+	return types.Sender(types.LatestSignerForChainID(c.chainID), tx)
+}

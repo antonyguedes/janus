@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 
 func main() {
 	besuRPC := flag.String("besu", "anvil", `"anvil" para subir um anvil, ou a URL de um Besu QBFT (make besu-up)`)
+	besuWS := flag.String("besu-ws", "ws://localhost:8546", "URL WebSocket do Besu (relay Cacti); ignorado com anvil")
 	policy := flag.String("policy", "dev", "política de tempo: dev (T2=3min, T1=6min) | e2e (T2=75s, T1=170s)")
 	dir := flag.String("dir", ".janus/net", "diretório de estado (configs, SQLite, segredos)")
 	origin := flag.String("origin", "http://localhost:5173", "origem do simulador web (CORS)")
@@ -60,6 +62,7 @@ func main() {
 		rpc, stop, err = it.StartAnvil(port)
 		must(err)
 		defer stop()
+		*besuWS = strings.Replace(rpc, "http://", "ws://", 1)
 	}
 	dep, depPath, err := it.DeployBesu(ctx, rpc, abs)
 	must(err)
@@ -67,18 +70,20 @@ func main() {
 
 	// 2) Configuração dos nós Janus (APIs nas portas padrão do simulador)
 	cactiPorts := map[string]int{jt.AuditorNode: 4100, "banco": 4101}
+	const relayPort = 4102
 	if *useCacti {
 		if err := it.CactiAvailable(); err != nil {
 			log.Printf("Cacti desabilitado: %v", err)
 			*useCacti = false
 		}
 	}
+	relay := relayPort
 	if !*useCacti {
-		cactiPorts = nil
+		cactiPorts, relay = nil, 0
 	}
 	urls, err := it.WriteJanusConfigs(it.NodeConfig{Dir: abs, RPC: rpc, Deployment: depPath, Policy: *policy,
 		AllowOrigin: *origin, Ports: map[string]int{jt.AuditorNode: 8080, "vendedora": 8081, "banco": 8082},
-		Cacti: cactiPorts})
+		Cacti: cactiPorts, Relay: relay})
 	must(err)
 	must(os.Setenv("JANUS_CONFIG_DIR", abs))
 
@@ -106,6 +111,14 @@ func main() {
 		must(err)
 		defer srv.Stop()
 		log.Printf("cacti %-12s %s (conector Fabric, %s)", node, srv.URL, msp[node])
+	}
+	if relay > 0 {
+		logf, err := os.Create(filepath.Join(cdir, "relay.log"))
+		must(err)
+		srv, err := it.StartCactiRelay(cdir, relay, rpc, *besuWS, it.KeyRelay, logf)
+		must(err)
+		defer srv.Stop()
+		log.Printf("cacti %-12s %s (conector Besu, relay da Vendedora)", "relay", srv.URL)
 	}
 
 	// 4) Governança B2: cadastra as chaves de atestador (Registradora + Banco), política 2-de-2
@@ -147,7 +160,8 @@ func cactiSummary(ports map[string]int) string {
 	if len(ports) == 0 {
 		return "desabilitado (atestação sem prova de ledger via Cacti)"
 	}
-	return fmt.Sprintf("Registradora :%d, Banco :%d (conector Fabric v3.0.1)", ports[jt.AuditorNode], ports["banco"])
+	return fmt.Sprintf("Registradora :%d, Banco :%d (conector Fabric), relay :4102 (conector Besu) — v3.0.1",
+		ports[jt.AuditorNode], ports["banco"])
 }
 
 func writeJSON(path string, v any) error {
