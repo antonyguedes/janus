@@ -1,6 +1,7 @@
 package token
 
 import (
+	"context"
 	"crypto"
 	"encoding/json"
 	"errors"
@@ -275,14 +276,26 @@ type Expectation struct {
 type Expectations struct {
 	mu sync.RWMutex
 	m  map[string]Expectation
+	kv KV // durável (opcional)
 }
 
 func NewExpectations() *Expectations { return &Expectations{m: map[string]Expectation{}} }
 
-func (e *Expectations) Put(x Expectation) {
+// Put registra a expectativa. Com armazenamento durável, só vale depois de persistida.
+func (e *Expectations) Put(x Expectation) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.kv != nil {
+		raw, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		if err := e.kv.Put(context.Background(), bucketExpectations, hashKey(x.Hash), raw); err != nil {
+			return fmt.Errorf("expectativa: persistir: %w", err)
+		}
+	}
 	e.m[string(x.Hash)] = x
+	return nil
 }
 
 func (e *Expectations) Get(hash []byte) (Expectation, bool) {
@@ -316,7 +329,9 @@ func (v *ExpectLockView) Call(view.Context) (any, error) {
 	if len(v.Hash) != 32 || v.LinearID == "" || v.Deadline.IsZero() {
 		return nil, fmt.Errorf("expect: incomplete expectation")
 	}
-	DefaultExpectation.Put(*v.Expectation)
+	if err := DefaultExpectation.Put(*v.Expectation); err != nil {
+		return nil, err
+	}
 	return true, nil
 }
 
@@ -611,10 +626,14 @@ func (v *GravameView) Call(view.Context) (any, error) {
 	if v.LinearID == "" {
 		return nil, fmt.Errorf("gravame: linearId obrigatório")
 	}
+	var err error
 	if v.Clear {
-		DefaultGravames.Clear(v.LinearID)
+		err = DefaultGravames.Clear(v.LinearID)
 	} else {
-		DefaultGravames.Set(v.LinearID, v.Motivo)
+		err = DefaultGravames.Set(v.LinearID, v.Motivo)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return true, nil
 }

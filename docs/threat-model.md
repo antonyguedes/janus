@@ -25,7 +25,7 @@ Verificação: o simulador (`node/internal/swap/sim`) cobre os 9 cenários nas d
 | T17 | **Relay do Cacti malicioso ou comprometido** (desvia, forja ou retém o settle) | B2 | settle permissionless com destino fixo (Vendedora); prova verificada on-chain; o nó confirma inclusão e status pela própria cadeia; retenção vira só vivacidade (fallback direto opcional, reversão após T2) | ADR-0006; `TestCactiBesuSettle`; `TestE2EAttested` |
 | T9 | **Watchtower do Banco fora do ar** por mais de `T1 − T2` depois da revelação | A, B2 | claim permissionless no Besu; reconciliação no boot; S persistido assim que visto; alertas; watchtowers redundantes (operacional) | cenários `buyer-crash-recover` (ok) e `buyer-offline-past-t1` (**risco residual documentado**) |
 | T10 | **Relay ou atestadores parados** | B2 | é questão de vivacidade, não de segurança: sem atestação não há pagamento, e as duas pernas revertem | cenário `seller-no-reveal` em B (relay parado) |
-| T11 | **Recebível com gravame** ou travado duas vezes | A, B2 | registro de gravames na auditoria; UTXO do Panurus (um token só se gasta uma vez) | integração "gravame bloqueia o lock" |
+| T11 | **Recebível com gravame** ou travado duas vezes; gravame "esquecido" após reinício da Registradora | A, B2 | registro de gravames na auditoria, persistido no SQLite (falha fechada); UTXO do Panurus (um token só se gasta uma vez) | integração "gravame bloqueia o lock"; `TestE2ERegistradoraRestart` |
 | T12 | **Emissão duplicada** do mesmo recebível | — | ID único derivado do número de registro (`uniqueness`) | `IssueView` |
 | T13 | **Termos adulterados** em trânsito ou repudiados | A, B2 | sessão FSC autenticada (X.509); as duas partes assinam o hash canônico com a identidade de owner | `TestSignedTerms`, E2E (negociação real) |
 | T14 | **Vazamento de S em repouso** | A, B2 | AES-256-GCM com swapId como AAD; chave mestra 0600 (KMS/HSM fora do escopo do MVP) | `secrets_test.go` |
@@ -38,4 +38,4 @@ Verificação: o simulador (`node/internal/swap/sim`) cobre os 9 cenários nas d
 2. **Panurus não auditado:** versão fixada (ADR-0001), mudanças monitoradas e dependência isolada atrás de portas.
 3. **Privacidade no Besu:** valor e partes do lock são visíveis no Besu. O ZKAT-DLog cobre só o lado Fabric (fase opcional).
 4. **Chaves em arquivo (DEV):** em produção, as chaves Besu, de atestador e mestra vão para KMS/HSM, e as chaves de atestador são emitidas pela CA da org.
-5. **Estado em memória:** registro de gravames, expectativas de lock e locks auditados ficam em memória no MVP. A expectativa é reinstalada na reconciliação de boot. Gravames e locks auditados precisam de persistência antes de produção.
+5. ~~**Estado em memória**~~ (resolvido): gravames, locks auditados (evidência da atestação B2) e expectativas de lock são persistidos no SQLite do nó (write-through, falha fechada se não persistir) e recarregados no boot. Verificado por `TestDurable*` e `TestE2ERegistradoraRestart`.

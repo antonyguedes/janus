@@ -242,6 +242,10 @@ func (s *SDK) startRegistradora(ctx context.Context, cfg *Config, views *fscview
 	if err != nil {
 		return err
 	}
+	// gravames, locks auditados e expectativas de lock sobrevivem a reinícios
+	if err := token.AttachKV(ctx, st.KV()); err != nil {
+		return fmt.Errorf("janus: recarregar estado durável: %w", err)
+	}
 	ai, err := s.enableAttestor(cfg, cfg.Channel, cfg.Namespace)
 	if err != nil {
 		return err
@@ -310,6 +314,10 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 	if err != nil {
 		return err
 	}
+	// gravames, locks auditados e expectativas de lock sobrevivem a reinícios
+	if err := token.AttachKV(ctx, st.KV()); err != nil {
+		return fmt.Errorf("janus: recarregar estado durável: %w", err)
+	}
 	mk, err := secrets.LoadOrCreateKey(filepath.Join(cfg.DataDir, "master.key"))
 	if err != nil {
 		return err
@@ -319,7 +327,8 @@ func (s *SDK) startParty(ctx context.Context, cfg *Config, views *fscview.Manage
 		return err
 	}
 
-	fab := &token.FSCPort{Views: views, Counterparty: cfg.Counterparty}
+	fab := &token.FSCPort{Views: views, Counterparty: cfg.Counterparty,
+		DeadlineSkew: time.Duration(cfg.Faults.LockDeadlineSkewSec) * time.Second}
 	proto := &htlc.Protocol{Fabric: fab, Besu: besuAdapter{bc}, Secrets: sec, Policy: policy}
 	payB := settlementAdapter{c: bc, log: s.log}
 	if r := cfg.Relay; r != nil {

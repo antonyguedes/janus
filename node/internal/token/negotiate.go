@@ -250,8 +250,10 @@ func (a *AcceptProposalView) Call(ctx view.Context) (any, error) {
 		return reject(err)
 	}
 	// Registra a expectativa ANTES de responder: o lock da Vendedora pode chegar logo depois.
-	DefaultExpectation.Put(Expectation{Hash: t.Hashlock[:], LinearID: t.AssetID, Deadline: t.T1Time(),
-		Tolerance: h.Policy.DeadlineTolerance})
+	if err := DefaultExpectation.Put(Expectation{Hash: t.Hashlock[:], LinearID: t.AssetID, Deadline: t.T1Time(),
+		Tolerance: h.Policy.DeadlineTolerance}); err != nil {
+		return reject(err)
+	}
 	if h.OnSigned != nil {
 		if err := h.OnSigned(ctx.Context(), swap.RoleBuyer, &st); err != nil {
 			return reject(err)

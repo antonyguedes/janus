@@ -49,7 +49,10 @@ func (a *AuditView) Call(ctx view.Context) (any, error) {
 		return nil, err
 	}
 	slog.Info("audit: transação auditada", "tx", tx.ID(), "inputs", inputs.Count(), "outputs", outputs.Count())
-	recordLocks(tx.ID(), outputs)
+	// A evidência de atestação (B2) precisa estar persistida antes de a auditoria aprovar o lock.
+	if err := recordLocks(tx.ID(), outputs); err != nil {
+		return nil, err
+	}
 	return ctx.RunView(ttx.NewAuditApproveView(w, tx))
 }
 
@@ -110,7 +113,7 @@ func CheckAudit(p AuditPolicy, g *Gravames, inputs *token.InputStream, outputs *
 
 // recordLocks guarda os locks HTLC aprovados pela auditoria (evidência do atestador, B2).
 // O atestador só assina depois de conferir no ledger que a transação foi comitada como válida.
-func recordLocks(txID string, outputs *token.OutputStream) {
+func recordLocks(txID string, outputs *token.OutputStream) error {
 	for i := range outputs.Count() {
 		out := outputs.At(i)
 		s, isHTLC, err := scriptOfOutput(out)
@@ -126,10 +129,13 @@ func recordLocks(txID string, outputs *token.OutputStream) {
 			slog.Warn("audit: htlc output sem recebível", "tx", txID, "type", string(outputType(out)), "err", err)
 			continue
 		}
-		DefaultLocks.Put(LockRecord{Hash: s.HashInfo.Hash, LinearID: r.LinearID, Sender: s.Sender,
-			Recipient: s.Recipient, Deadline: s.Deadline, TxID: txID})
+		if err := DefaultLocks.Put(LockRecord{Hash: s.HashInfo.Hash, LinearID: r.LinearID, Sender: s.Sender,
+			Recipient: s.Recipient, Deadline: s.Deadline, TxID: txID}); err != nil {
+			return fmt.Errorf("audit: %w", err)
+		}
 		slog.Info("audit: lock registrado para atestação", "tx", txID, "asset", r.LinearID)
 	}
+	return nil
 }
 
 // ledgerOwner devolve o dono do output NO LEDGER. Nos outputs de transferência auditados, o campo

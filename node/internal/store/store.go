@@ -49,6 +49,15 @@ func Open(path string) (*Store, error) {
 	)`); err != nil {
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS kv (
+		bucket TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value BLOB NOT NULL,
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (bucket, key)
+	)`); err != nil {
+		return nil, fmt.Errorf("store: migrate kv: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -149,4 +158,47 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ------------------------------------------------------------------ KV durável
+// Estado operacional que precisa sobreviver a reinícios (gravames, locks auditados, expectativas
+// de lock). KVStore implementa token.KV.
+
+// KVStore é a visão chave-valor do store.
+type KVStore struct{ s *Store }
+
+// KV devolve a visão chave-valor (buckets) do store.
+func (s *Store) KV() *KVStore { return &KVStore{s: s} }
+
+func (k *KVStore) Put(ctx context.Context, bucket, key string, value []byte) error {
+	s := k.s
+	_, err := s.db.ExecContext(ctx, `INSERT INTO kv (bucket, key, value, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(bucket, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		bucket, key, value, time.Now().UnixMilli())
+	return err
+}
+
+func (k *KVStore) Delete(ctx context.Context, bucket, key string) error {
+	s := k.s
+	_, err := s.db.ExecContext(ctx, `DELETE FROM kv WHERE bucket=? AND key=?`, bucket, key)
+	return err
+}
+
+func (k *KVStore) All(ctx context.Context, bucket string) (map[string][]byte, error) {
+	s := k.s
+	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM kv WHERE bucket=?`, bucket)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]byte{}
+	for rows.Next() {
+		var k string
+		var v []byte
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }

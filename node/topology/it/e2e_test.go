@@ -21,6 +21,7 @@ import (
 	"janus/node/internal/besu"
 	"janus/node/internal/cacti"
 	"janus/node/internal/engine"
+	"janus/node/internal/hashlock"
 	"janus/node/internal/swap"
 	jt "janus/node/internal/token"
 )
@@ -150,7 +151,9 @@ type e2eOpts struct {
 	policy   string // dev | e2e
 	faults   map[string]engine.Faults
 	cacti    bool // atestadores provam o lock via conector Fabric do Cacti (ADR-0005)
-	setup    func(urls map[string]string, rpc string, dep *besu.Deployment)
+	// cactiLater: nós atestadores cujo servidor Cacti só sobe quando o teste pedir (env.startCacti)
+	cactiLater map[string]bool
+	setup      func(urls map[string]string, rpc string, dep *besu.Deployment)
 }
 
 type e2eEnv struct {
@@ -159,6 +162,23 @@ type e2eEnv struct {
 	rpc   string
 	dep   *besu.Deployment
 	cacti map[string]*CactiServer
+
+	ccp        map[string]any
+	ids        map[string]CactiIdentity
+	cactiPorts map[string]int
+}
+
+var nodeMSP = map[string]string{jt.AuditorNode: "RegistradoraMSP", "banco": "BancoMSP"}
+
+// startCacti sobe o servidor Cacti (conector Fabric) de um nó atestador.
+func (env *e2eEnv) startCacti(t *testing.T, node string) {
+	t.Helper()
+	srv, err := StartCacti(t.TempDir(), node, env.cactiPorts[node], env.ccp, env.ids[nodeMSP[node]], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Stop)
+	env.cacti[node] = srv
 }
 
 func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
@@ -199,20 +219,15 @@ func bootE2E(t *testing.T, o e2eOpts) *e2eEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := &e2eEnv{ii: n.II, urls: urls, rpc: rpc, dep: dep, cacti: map[string]*CactiServer{}}
+	env := &e2eEnv{ii: n.II, urls: urls, rpc: rpc, dep: dep, cacti: map[string]*CactiServer{}, cactiPorts: cactiPorts}
 	if o.cacti {
-		ccp, ids, err := n.FabricConnectionProfile()
-		if err != nil {
+		if env.ccp, env.ids, err = n.FabricConnectionProfile(); err != nil {
 			t.Fatal(err)
 		}
-		msp := map[string]string{jt.AuditorNode: "RegistradoraMSP", "banco": "BancoMSP"}
-		for node, port := range cactiPorts {
-			srv, err := StartCacti(t.TempDir(), node, port, ccp, ids[msp[node]], nil)
-			if err != nil {
-				t.Fatal(err)
+		for node := range cactiPorts {
+			if !o.cactiLater[node] {
+				env.startCacti(t, node)
 			}
-			t.Cleanup(srv.Stop)
-			env.cacti[node] = srv
 		}
 		relay, err := StartCactiRelay(t.TempDir(), relayPort, rpc, strings.Replace(rpc, "http://", "ws://", 1), KeyRelay, nil)
 		if err != nil {
@@ -291,6 +306,29 @@ func e2e(t *testing.T, o e2eOpts) (*e2eEnv, api.SwapDTO) {
 	return env, proposed
 }
 
+// registerAttestors cadastra no FabricProofVerifier as chaves de atestador publicadas pela
+// Registradora e pelo Banco em /api/v1/info, com política 2-de-2.
+func registerAttestors(t *testing.T, urls map[string]string, rpc string, dep *besu.Deployment) {
+	t.Helper()
+	admin, _ := crypto.HexToECDSA(keyAdmin)
+	c, err := besu.Dial(context.Background(), rpc, admin, dep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var atts []besu.Attestor
+	for _, node := range []string{jt.AuditorNode, "banco"} {
+		in := getInfo(t, urls[node])
+		if in.Attestor == nil {
+			t.Fatalf("%s sem chave de atestador", node)
+		}
+		atts = append(atts, besu.Attestor{MSPID: in.Attestor.MSPID, Qx: hex32(t, in.Attestor.Qx), Qy: hex32(t, in.Attestor.Qy)})
+	}
+	if err := c.RegisterAttestors(context.Background(), 2, atts...); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestE2EHTLC: Abordagem A ponta a ponta com os nós Janus reais (SDK do Janus dentro dos nós
 // FSC), Fabric 3.1.5 + Panurus via NWO e Besu (anvil, EVM Osaka). Tudo dirigido pelas APIs REST,
 // como o simulador faria.
@@ -301,22 +339,7 @@ func TestE2EHTLC(t *testing.T) { e2e(t, e2eOpts{proto: swap.ProtocolHTLC, regist
 // AttestedSettlement verifica a política 2-de-2 com P-256 nativo antes de liberar o Drex.
 func TestE2EAttested(t *testing.T) {
 	env, proposed := e2e(t, e2eOpts{proto: swap.ProtocolCacti, registro: "REG-E2E-B", cacti: true, setup: func(urls map[string]string, rpc string, dep *besu.Deployment) {
-		admin, _ := crypto.HexToECDSA(keyAdmin)
-		c, err := besu.Dial(context.Background(), rpc, admin, dep)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var atts []besu.Attestor
-		for _, node := range []string{jt.AuditorNode, "banco"} {
-			in := getInfo(t, urls[node])
-			if in.Attestor == nil {
-				t.Fatalf("%s sem chave de atestador", node)
-			}
-			atts = append(atts, besu.Attestor{MSPID: in.Attestor.MSPID, Qx: hex32(t, in.Attestor.Qx), Qy: hex32(t, in.Attestor.Qy)})
-		}
-		if err := c.RegisterAttestors(context.Background(), 2, atts...); err != nil {
-			t.Fatal(err)
-		}
+		registerAttestors(t, urls, rpc, dep)
 	}})
 
 	// A atestação aceita on-chain traz o bloco que o conector Fabric do Cacti reporta para a
@@ -389,4 +412,52 @@ func TestE2EBuyerCrashRecover(t *testing.T) {
 	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
 	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusCompleted, time.Minute)
 	nftWith(t, env, "banco", "vendedora", id)
+}
+
+// TestE2ERegistradoraRestart: o estado operacional da Registradora sobrevive ao reinício do nó.
+//   - um gravame registrado antes do reinício continua bloqueando o lock do recebível;
+//   - o lock auditado antes do reinício continua servindo de evidência para a atestação B2.
+//     O servidor Cacti da Registradora só sobe depois do reinício e a atestação é falha fechada,
+//     então ela não pode ter atestado antes: se o swap concluir, a evidência veio do SQLite.
+func TestE2ERegistradoraRestart(t *testing.T) {
+	o := e2eOpts{proto: swap.ProtocolCacti, registro: "REG-E2E-RESTART", cacti: true,
+		cactiLater: map[string]bool{jt.AuditorNode: true},
+		setup:      func(urls map[string]string, rpc string, dep *besu.Deployment) { registerAttestors(t, urls, rpc, dep) }}
+	env := bootE2E(t, o)
+
+	// 1) gravame em um recebível
+	var onerado map[string]string
+	for i := 0; i < 30; i++ {
+		if post(t, env.urls[jt.AuditorNode]+"/api/v1/recebiveis", api.IssueRequest{Owner: "vendedora",
+			Registro: "REG-ONERADO", Cedente: "V", Sacado: "S", ValorFace: 100, Vencimento: "2027-03-31"},
+			&onerado) == http.StatusCreated {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	ok(t, env.ii, jt.AuditorNode, "gravame", jt.Gravame{LinearID: onerado["linearId"], Motivo: "penhor judicial"})
+
+	// 2) swap B2: o lock é auditado (e persistido), mas a Registradora ainda não consegue atestar
+	_, proposed := issueAndPropose(t, env, o)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusBothLocked, time.Minute)
+
+	// 3) reinício da Registradora: tudo em memória se perde, o SQLite fica
+	env.ii.StopFSCNode(jt.AuditorNode)
+	env.ii.StartFSCNode(jt.AuditorNode)
+	waitAPI(t, env.urls[jt.AuditorNode])
+
+	// 3a) o gravame sobreviveu: o lock do recebível onerado é recusado pela auditoria
+	_, h, _ := hashlock.New()
+	T1 := time.Now().Add(3 * time.Minute)
+	ok(t, env.ii, "banco", "expect", jt.Expectation{Hash: h[:], LinearID: onerado["linearId"], Deadline: T1, Tolerance: 30 * time.Second})
+	if _, err := call(t, env.ii, "vendedora", "lock", jt.Lock{LinearID: onerado["linearId"], Recipient: "banco", Hash: h[:], Deadline: T1}); err == nil ||
+		!strings.Contains(err.Error(), "gravame") {
+		t.Fatalf("o gravame deveria ter sobrevivido ao reinício: %v", err)
+	}
+
+	// 3b) a evidência do lock auditado sobreviveu: com o Cacti da Registradora no ar, a atestação
+	//     2-de-2 sai e o swap conclui
+	env.startCacti(t, jt.AuditorNode)
+	waitStatus(t, env.urls["banco"], proposed.SwapID, swap.StatusCompleted, 2*time.Minute)
+	waitStatus(t, env.urls["vendedora"], proposed.SwapID, swap.StatusCompleted, time.Minute)
 }

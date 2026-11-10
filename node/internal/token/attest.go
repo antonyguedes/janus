@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,14 +46,26 @@ type LockRecord struct {
 type LockRegistry struct {
 	mu sync.RWMutex
 	m  map[string]LockRecord
+	kv KV // durável (opcional)
 }
 
 func NewLockRegistry() *LockRegistry { return &LockRegistry{m: map[string]LockRecord{}} }
 
-func (r *LockRegistry) Put(x LockRecord) {
+// Put registra o lock. Com armazenamento durável, só vale depois de persistido.
+func (r *LockRegistry) Put(x LockRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.kv != nil {
+		raw, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		if err := r.kv.Put(context.Background(), bucketLocks, hashKey(x.Hash), raw); err != nil {
+			return fmt.Errorf("lock auditado: persistir: %w", err)
+		}
+	}
 	r.m[string(x.Hash)] = x
+	return nil
 }
 
 func (r *LockRegistry) Get(hash []byte) (LockRecord, bool) {

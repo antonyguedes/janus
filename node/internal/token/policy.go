@@ -2,6 +2,7 @@ package token
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"fmt"
 	"sync"
@@ -86,20 +87,35 @@ func (p AuditPolicy) CheckSpend(s *htlc.Script, op HTLCOp, now time.Time) error 
 type Gravames struct {
 	mu  sync.RWMutex
 	set map[string]string // LinearID -> motivo
+	kv  KV                // durável (opcional)
 }
 
 func NewGravames() *Gravames { return &Gravames{set: map[string]string{}} }
 
-func (g *Gravames) Set(linearID, motivo string) {
+// Set registra o gravame. Com armazenamento durável, só vale depois de persistido.
+func (g *Gravames) Set(linearID, motivo string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.kv != nil {
+		if err := g.kv.Put(context.Background(), bucketGravames, linearID, []byte(motivo)); err != nil {
+			return fmt.Errorf("gravame: persistir: %w", err)
+		}
+	}
 	g.set[linearID] = motivo
+	return nil
 }
 
-func (g *Gravames) Clear(linearID string) {
+// Clear baixa o gravame. Com armazenamento durável, só vale depois de persistido.
+func (g *Gravames) Clear(linearID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.kv != nil {
+		if err := g.kv.Delete(context.Background(), bucketGravames, linearID); err != nil {
+			return fmt.Errorf("gravame: persistir baixa: %w", err)
+		}
+	}
 	delete(g.set, linearID)
+	return nil
 }
 
 // Check devolve erro se o recebível tiver gravame.
