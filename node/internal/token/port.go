@@ -25,6 +25,8 @@ type FSCPort struct {
 	Views ViewInitiator
 	// Counterparty é o identificador FSC do nó do Banco (destino do lock). Só a Vendedora usa.
 	Counterparty string
+	// DeadlineSkew: falha injetada (cenário 6) que desloca o deadline gravado no lock.
+	DeadlineSkew time.Duration
 }
 
 func (p *FSCPort) Status(ctx context.Context, hash [32]byte) (swap.FabricView, error) {
@@ -71,7 +73,7 @@ func (p *FSCPort) Lock(ctx context.Context, t *swap.SwapTerms) error {
 		return fmt.Errorf("fabric lock: counterparty node not configured")
 	}
 	_, err := p.Views.InitiateView(ctx, &LockView{Lock: &Lock{
-		LinearID: t.AssetID, Recipient: p.Counterparty, Hash: t.Hashlock[:], Deadline: t.T1Time(),
+		LinearID: t.AssetID, Recipient: p.Counterparty, Hash: t.Hashlock[:], Deadline: t.T1Time().Add(p.DeadlineSkew),
 	}})
 	return err
 }

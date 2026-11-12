@@ -30,17 +30,29 @@ type Step struct {
 
 // Faults injeta falhas para os cenários E2E (--no-lock, --no-reveal, --crash-after-reveal).
 type Faults struct {
-	NoLock           bool // o nó nunca trava a sua perna
-	NoReveal         bool // a Vendedora nunca revela S
-	CrashAfterReveal bool // o nó para logo depois da revelação (o reinício faz a reconciliação)
+	NoLock           bool `json:"noLock,omitempty"`           // o nó nunca trava a sua perna
+	NoReveal         bool `json:"noReveal,omitempty"`         // a Vendedora nunca revela S
+	CrashAfterReveal bool `json:"crashAfterReveal,omitempty"` // o nó para logo depois da revelação
+	// RevealAtT2MinusSec (cenário 4): a Vendedora segura S até T2 − N segundos. Com N maior que a
+	// RevealMargin, ela ainda revela dentro da janela segura, no último momento.
+	RevealAtT2MinusSec int `json:"revealAtT2MinusSec,omitempty"`
+	// LockDeadlineSkewSec (cenário 6): desloca o deadline gravado no lock do NFT em relação ao T1
+	// combinado (aplicado pela porta Fabric da Vendedora).
+	LockDeadlineSkewSec int `json:"lockDeadlineSkewSec,omitempty"`
 }
 
-func (f Faults) blocks(d swap.Decision) bool {
+// blocks informa se a falha injetada suprime a ação agora.
+func (f Faults) blocks(d swap.Decision, t *swap.SwapTerms, now time.Time) bool {
 	switch d.Kind {
 	case swap.ActLockAsset, swap.ActLockPayment:
 		return f.NoLock
 	case swap.ActClaimPayment, swap.ActSettlePayment:
-		return f.NoReveal
+		if f.NoReveal {
+			return true
+		}
+		if f.RevealAtT2MinusSec > 0 {
+			return now.Before(t.T2Time().Add(-time.Duration(f.RevealAtT2MinusSec) * time.Second))
+		}
 	}
 	return false
 }
@@ -156,7 +168,7 @@ func (e *Engine) Run(ctx context.Context, t *swap.SwapTerms) (swap.Decision, err
 				return d, nil
 			case swap.ActWait, swap.ActAlert:
 			default:
-				if e.cfg.Faults.blocks(d) {
+				if e.cfg.Faults.blocks(d, t, time.Now()) {
 					step.Meta = map[string]string{"fault": "ação suprimida por falha injetada"}
 				} else if err := proto.Execute(ctx, e.cfg.Role, t, d); err != nil {
 					step.Error = err.Error()

@@ -43,7 +43,7 @@ make fabric-bins   # binários do Fabric 3.1.5 / CA 1.5.22 (só para a integraç
 | Contratos (unit, fuzz, invariantes) | `make test-contracts` |
 | Nó (lógica, motor, API, cliente Besu via anvil) | `make test-node` |
 | Integração Fabric/Panurus (rede NWO real) | `make it` |
-| E2E (Fabric NWO + anvil + 3 nós Janus): A, B2, cenário 3, cenário 5 | `make it` (os testes `TestE2E*`) |
+| E2E (Fabric NWO + anvil + 3 nós Janus + Cacti): A, B2 e os cenários 2, 3, 4, 5 e 6 do plano, mais o reinício da Registradora | `make e2e` (os testes `TestE2E*`) |
 | Simulador web | `npm run test -w @janus/web` |
 
 ## Demonstração completa

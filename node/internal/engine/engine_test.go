@@ -258,3 +258,21 @@ func (c *crashBeforeClaim) Execute(ctx context.Context, r swap.Role, t *swap.Swa
 	}
 	return c.Protocol.Execute(ctx, r, t, d)
 }
+
+func TestFaultRevealAtT2Minus(t *testing.T) {
+	tt := &swap.SwapTerms{T2: 1_000}
+	f := Faults{RevealAtT2MinusSec: 25}
+	claim := swap.Decision{Kind: swap.ActClaimPayment}
+	if !f.blocks(claim, tt, time.Unix(974, 0)) {
+		t.Fatal("antes de T2-25s a revelação deveria ser segurada")
+	}
+	if f.blocks(claim, tt, time.Unix(975, 0)) {
+		t.Fatal("em T2-25s a revelação deveria seguir")
+	}
+	if f.blocks(swap.Decision{Kind: swap.ActLockAsset}, tt, time.Unix(0, 0)) {
+		t.Fatal("o lock não é afetado")
+	}
+	if !(Faults{NoReveal: true}).blocks(swap.Decision{Kind: swap.ActSettlePayment}, tt, time.Unix(999, 0)) {
+		t.Fatal("NoReveal")
+	}
+}
