@@ -219,20 +219,6 @@ curl -sN localhost:8081/api/v1/events                        # passos do motor a
 
 </details>
 
-## 🎨 Paleta "Portais de Jano"
-
-<p align="center"><img src="docs/assets/palette.svg" alt="Paleta: Noite #0B0920, Painel #151233, Violeta #7C4DFF/#B49BFF, Ouro #E7A83A/#FFD98A, Ciano #19C3E6/#8CF0FF, Magenta #E05CF2" width="100%"></p>
-
-| Cor | Hex | Papel |
-|---|---|---|
-| 🌑 Noite | `#0B0920` · `#151233` | o vazio entre os mundos (fundo e cartões) |
-| 🟣 Violeta de Jano | `#7C4DFF` · `#B49BFF` | o guardião: ações, marca, passagem |
-| 🟡 Ouro do Fabric | `#E7A83A` · `#FFD98A` | o portal do recebível |
-| 🔵 Ciano do Besu | `#19C3E6` · `#8CF0FF` | o portal do Drex |
-| 🩷 Magenta | `#E05CF2` | o relay do Cacti |
-
-Tipografia: **Cinzel** (inscrições romanas) nos títulos e **Inter** no texto.
-
 ---
 
 <sub>
