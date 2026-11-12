@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" role="img" aria-labelledby="t">
+  <title id="t">Paleta Portais de Jano</title>
+  <defs><clipPath id="sw"><rect width="150" height="110" rx="14"/></clipPath></defs>
+  <rect width="1200" height="220" rx="18" fill="#0b0920"/>
+  <g font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <g transform="translate(30 30)">
+      <rect width="150" height="110" rx="14" fill="#0b0920" stroke="#2d2860"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Noite</text>
+      <text y="158" fill="#a39fca" font-size="13">#0B0920 · fundo</text>
+    </g>
+    <g transform="translate(225 30)">
+      <rect width="150" height="110" rx="14" fill="#151233" stroke="#2d2860"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Painel</text>
+      <text y="158" fill="#a39fca" font-size="13">#151233 · cartões</text>
+    </g>
+    <g transform="translate(420 30)">
+      <g clip-path="url(#sw)"><rect width="150" height="110" fill="#7c4dff"/><rect y="70" width="150" height="40" fill="#b49bff"/></g>
+      <rect width="150" height="110" rx="14" fill="none" stroke="#b49bff"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Violeta de Jano</text>
+      <text y="158" fill="#a39fca" font-size="13">#7C4DFF · #B49BFF</text>
+      <text y="176" fill="#a39fca" font-size="12">o guardião · ações</text>
+    </g>
+    <g transform="translate(615 30)">
+      <g clip-path="url(#sw)"><rect width="150" height="110" fill="#e7a83a"/><rect y="70" width="150" height="40" fill="#ffd98a"/></g>
+      <rect width="150" height="110" rx="14" fill="none" stroke="#ffd98a"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Ouro do Fabric</text>
+      <text y="158" fill="#a39fca" font-size="13">#E7A83A · #FFD98A</text>
+      <text y="176" fill="#a39fca" font-size="12">portal do recebível</text>
+    </g>
+    <g transform="translate(810 30)">
+      <g clip-path="url(#sw)"><rect width="150" height="110" fill="#19c3e6"/><rect y="70" width="150" height="40" fill="#8cf0ff"/></g>
+      <rect width="150" height="110" rx="14" fill="none" stroke="#8cf0ff"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Ciano do Besu</text>
+      <text y="158" fill="#a39fca" font-size="13">#19C3E6 · #8CF0FF</text>
+      <text y="176" fill="#a39fca" font-size="12">portal do Drex</text>
+    </g>
+    <g transform="translate(1005 30)">
+      <rect width="150" height="110" rx="14" fill="#e05cf2"/>
+      <text y="138" fill="#ece9ff" font-size="15" font-weight="600">Magenta</text>
+      <text y="158" fill="#a39fca" font-size="13">#E05CF2</text>
+      <text y="176" fill="#a39fca" font-size="12">relay do Cacti</text>
+    </g>
+  </g>
+</svg>

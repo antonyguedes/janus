@@ -15,10 +15,11 @@ help: ## lista os alvos
 
 # ------------------------------------------------------------------ dependências
 .PHONY: deps
-deps: ## instala dependências (Foundry libs, módulos Go)
+deps: ## instala dependências (Foundry libs, módulos Go, npm: simulador web e servidores Cacti)
 	cd contracts && [ -d lib/openzeppelin-contracts ] || forge install --no-git OpenZeppelin/openzeppelin-contracts@v5.7.0
 	cd contracts && [ -d lib/forge-std ] || forge install --no-git foundry-rs/forge-std
 	cd node && go mod download
+	npm install
 
 # ------------------------------------------------------------------ Fabric
 .PHONY: fabric-bins
@@ -50,7 +51,7 @@ bindings: ## regenera os bindings Go (abigen v2) a partir dos contratos
 
 # ------------------------------------------------------------------ testes
 .PHONY: test test-contracts test-node test-vectors vectors
-test: test-vectors test-contracts test-node ## roda todos os testes offline
+test: test-vectors test-contracts test-node test-web ## roda todos os testes offline
 
 vectors: ## regenera os vetores compartilhados Go <-> Solidity
 	cd node && go run ./cmd/vectors -out ../testdata/vectors
@@ -61,6 +62,11 @@ test-vectors: ## vetores de hash/atestação nos dois lados
 
 test-contracts: ## forge test (unit + fuzz + invariantes)
 	cd contracts && forge test
+
+.PHONY: test-web
+test-web: ## testes e typecheck do simulador web
+	npm run test -w @janus/web
+	npm run typecheck -w @janus/web
 
 test-node: ## go test do nó Janus
 	cd node && go test ./... -cover

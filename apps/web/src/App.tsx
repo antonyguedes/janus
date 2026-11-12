@@ -6,6 +6,30 @@ import { SequenceDiagram } from "./components/SequenceDiagram";
 import { Timeline } from "./components/Timeline";
 import { Inspector } from "./components/Inspector";
 import { LivePanel } from "./components/LivePanel";
+import { JanusMark } from "./components/JanusMark";
+import { PortalBridge } from "./components/PortalBridge";
+
+type Theme = "auto" | "dark" | "light";
+
+function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const fromURL = new URLSearchParams(globalThis.location?.search ?? "").get("theme");
+    if (fromURL === "dark" || fromURL === "light") return fromURL;
+    try {
+      return (localStorage.getItem("janus.theme") as Theme) || "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "auto") delete root.dataset.theme;
+    else root.dataset.theme = theme;
+    try { localStorage.setItem("janus.theme", theme); } catch { /* sem storage */ }
+  }, [theme]);
+  const next = () => setTheme((t) => (t === "auto" ? "dark" : t === "dark" ? "light" : "auto"));
+  return [theme, next];
+}
 
 type Mode = "offline" | "live";
 type Tab = "success" | "failure";
@@ -17,6 +41,7 @@ const qs = new URLSearchParams(globalThis.location?.search ?? "");
 const initialT = qs.get("t");
 
 export function App() {
+  const [theme, cycleTheme] = useTheme();
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState("");
   const [mode, setMode] = useState<Mode>(qs.get("mode") === "live" ? "live" : "offline");
@@ -81,10 +106,10 @@ export function App() {
     <div className="app">
       <header>
         <div className="brand">
-          <span className="logo" aria-hidden>Ⅰ</span>
+          <JanusMark size={48} />
           <div>
             <h1>Janus</h1>
-            <p>Liquidação DvP · recebível no Fabric ↔ Drex no Besu</p>
+            <p>Guardião das passagens · recebível no <span className="t-gold">Fabric</span> ⇄ Drex no <span className="t-cyan">Besu</span></p>
           </div>
         </div>
         <div className="toggles">
@@ -96,6 +121,9 @@ export function App() {
             <button className={mode === "offline" ? "on" : ""} onClick={() => setMode("offline")}>Offline</button>
             <button className={mode === "live" ? "on" : ""} onClick={() => setMode("live")}>Live</button>
           </div>
+          <button className="theme-btn" onClick={cycleTheme} title={`Tema: ${theme}`} aria-label={`Tema: ${theme}`}>
+            {theme === "auto" ? "◐" : theme === "dark" ? "☾" : "☀"}
+          </button>
         </div>
       </header>
 
@@ -117,6 +145,8 @@ export function App() {
             ))}
           </div>
           {info && <p className="scenario-desc">{info.description}</p>}
+
+          <PortalBridge snap={snap} protocol={protocol} />
 
           <Timeline now={now} end={end} t1={result.t1} t2={result.t2} delta={result.delta}
             marks={result.events.map((e) => e.t)} onSeek={(t) => { setNow(t); setPlaying(false); }} />
@@ -142,6 +172,7 @@ export function App() {
           </div>
           <p className="footnote">
             Modo offline: a lógica de decisão é o mesmo <code>swap.NextAction</code> dos nós Janus, compilado para WebAssembly.
+            Tema original inspirado em Jano, deus romano das passagens.
             Prazos de desenvolvimento: T2 = {result.t2}s, T1 = {result.t1}s, Δ ≥ {result.delta}s.
           </p>
         </main>

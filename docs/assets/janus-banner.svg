@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" role="img" aria-labelledby="t d">
+  <title id="t">Janus</title>
+  <desc id="d">Dois portais, o dourado do Fabric e o ciano do Besu, guardados por Jano, deus romano das passagens.</desc>
+  <defs>
+    <radialGradient id="neb-gold" cx="0.12" cy="0.1" r="0.6">
+      <stop offset="0" stop-color="#e7a83a" stop-opacity=".35"/><stop offset="1" stop-color="#e7a83a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="neb-cyan" cx="0.9" cy="0.05" r="0.6">
+      <stop offset="0" stop-color="#19c3e6" stop-opacity=".3"/><stop offset="1" stop-color="#19c3e6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="neb-violet" cx="0.5" cy="1.2" r="0.8">
+      <stop offset="0" stop-color="#7c4dff" stop-opacity=".45"/><stop offset="1" stop-color="#7c4dff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd98a"/><stop offset="1" stop-color="#e7a83a"/></linearGradient>
+    <linearGradient id="cyan" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8cf0ff"/><stop offset="1" stop-color="#19c3e6"/></linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffd98a"/><stop offset=".5" stop-color="#b49bff"/><stop offset="1" stop-color="#8cf0ff"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e7a83a"/><stop offset=".5" stop-color="#b49bff"/><stop offset="1" stop-color="#19c3e6"/>
+    </linearGradient>
+    <radialGradient id="core" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#b49bff"/><stop offset="1" stop-color="#7c4dff"/></radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" rx="22" fill="#0b0920"/>
+  <rect width="1200" height="360" rx="22" fill="url(#neb-gold)"/>
+  <rect width="1200" height="360" rx="22" fill="url(#neb-cyan)"/>
+  <rect width="1200" height="360" rx="22" fill="url(#neb-violet)"/>
+  <g fill="#fff" opacity=".7">
+    <circle cx="90" cy="40" r="1"/><circle cx="310" cy="300" r="1.2"/><circle cx="520" cy="38" r="1"/>
+    <circle cx="700" cy="320" r="1"/><circle cx="880" cy="60" r="1.3"/><circle cx="1110" cy="290" r="1"/>
+    <circle cx="420" cy="140" r=".8"/><circle cx="790" cy="170" r=".8"/><circle cx="1010" cy="140" r="1"/>
+    <circle cx="160" cy="250" r=".9"/><circle cx="640" cy="250" r=".7"/><circle cx="980" cy="330" r=".8"/>
+  </g>
+
+  <!-- portal do Fabric (dourado) -->
+  <g transform="translate(200 180)" filter="url(#glow)">
+    <circle r="78" fill="none" stroke="#e7a83a" stroke-width="1.5" stroke-dasharray="4 7" opacity=".7">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="24s" repeatCount="indefinite"/>
+    </circle>
+    <g>
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="14s" repeatCount="indefinite"/>
+      <circle r="96" fill="none" stroke="url(#gold)" stroke-width="6" stroke-dasharray="120 26 60 30" opacity=".9"/>
+    </g>
+    <path d="M0 -26 L22 0 L0 26 L-22 0 Z" fill="none" stroke="#ffd98a" stroke-width="3"/>
+    <path d="M0 -12 L10 0 L0 12 L-10 0 Z" fill="#ffd98a"/>
+  </g>
+  <text x="200" y="314" text-anchor="middle" font-family="Cinzel, 'Trajan Pro', Georgia, serif" font-size="20" letter-spacing="4" fill="#ffd98a">FABRIC</text>
+  <text x="200" y="338" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a39fca">recebível · NFT do Panurus</text>
+
+  <!-- portal do Besu (ciano) -->
+  <g transform="translate(1000 180)" filter="url(#glow)">
+    <circle r="78" fill="none" stroke="#19c3e6" stroke-width="1.5" stroke-dasharray="4 7" opacity=".7">
+      <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="24s" repeatCount="indefinite"/>
+    </circle>
+    <g>
+      <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="14s" repeatCount="indefinite"/>
+      <circle r="96" fill="none" stroke="url(#cyan)" stroke-width="6" stroke-dasharray="120 26 60 30" opacity=".9"/>
+    </g>
+    <circle r="24" fill="none" stroke="#8cf0ff" stroke-width="3"/>
+    <circle r="10" fill="#8cf0ff"/>
+  </g>
+  <text x="1000" y="314" text-anchor="middle" font-family="Cinzel, 'Trajan Pro', Georgia, serif" font-size="20" letter-spacing="4" fill="#8cf0ff">BESU</text>
+  <text x="1000" y="338" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a39fca">pagamento · Drex</text>
+
+  <!-- a passagem -->
+  <rect x="306" y="226" width="588" height="3" rx="2" fill="url(#beam)" opacity=".85">
+    <animate attributeName="opacity" values=".45;1;.45" dur="3.2s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- marca de Jano (dois portais entrelaçados) -->
+  <g transform="translate(600 92) scale(1.3)" filter="url(#glow)">
+    <path d="M0 -18 A20 20 0 0 1 0 18 A20 20 0 0 1 0 -18 Z" fill="url(#core)"/>
+    <circle cx="-10" cy="0" r="18" fill="none" stroke="url(#gold)" stroke-width="3.2"/>
+    <circle cx="10" cy="0" r="18" fill="none" stroke="url(#cyan)" stroke-width="3.2"/>
+    <circle cx="0" cy="-4" r="3.2" fill="#0b0920"/><path d="M-1.7 -2 L1.7 -2 L2.6 6 L-2.6 6 Z" fill="#0b0920"/>
+  </g>
+  <text x="600" y="186" text-anchor="middle" font-family="Cinzel, 'Trajan Pro', Georgia, serif" font-size="64" font-weight="700" letter-spacing="18" fill="url(#title)">JANUS</text>
+  <text x="600" y="214" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#ece9ff">guardião das passagens</text>
+  <text x="600" y="262" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#a39fca">liquidação atômica interbancária (DvP) · nenhum ativo sai da própria rede</text>
+</svg>
